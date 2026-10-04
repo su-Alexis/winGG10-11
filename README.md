@@ -81,6 +81,14 @@ itself over.
 
 MIT — see [LICENSE](LICENSE). Syncex's original script is also MIT.
 
-One carve-out: the embedded hosts blocklist is Dan Pollock's work, licensed
-**CC BY-SA 4.0**, and is not covered by the MIT license above. It is reproduced
-with attribution, as the script header records.
+One carve-out: the embedded hosts blocklist is Dan Pollock's work and is **not**
+covered by the MIT license above. It carries its own terms, quoted from its
+header:
+
+> You are free to copy and distribute this file for non-commercial uses, as long
+> the original URL and attribution is included.
+
+That is the author's own wording rather than a standard licence, and it
+**restricts commercial use**. The source URL and attribution are retained inside
+the embedded copy. If you intend to use this commercially, replace the blocklist
+step or obtain permission from the author first.

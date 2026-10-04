@@ -230,7 +230,14 @@
 ##  SOFTWARE.
 ##
 ##
-##  Dan Pollock's hosts file is licensed under the Creative Commons Attribution-ShareAlike 4.0 International License (CC BY-SA 4.0).
+##  Dan Pollock's hosts file carries its own terms, quoted from its header:
+##
+##    "You are free to copy and distribute this file for non-commercial uses,
+##     as long the original URL and attribution is included."
+##
+##  Note that is NOT a Creative Commons licence - it is the author's own wording,
+##  and it restricts commercial use. The source URL and attribution are retained
+##  inside the embedded copy, which is what those terms require.
 ##
 ##  
 ##|\
@@ -2893,7 +2900,9 @@ Start-Sleep -Milliseconds 250
 ############################################################################################################################################
 ############################################################################################################################################
 
-#  Dan Pollock's hosts blocklist - https://someonewhocares.org/hosts/ (CC BY-SA 4.0)
+#  Dan Pollock's hosts blocklist - https://someonewhocares.org/hosts/zero/
+#  Author's own terms: free to copy and distribute for non-commercial uses, as
+#  long as the original URL and attribution are included. Not a CC licence.
 $script:MNNSSMBlocklist = @'
 # This hosts file is brought to you by Dan Pollock and can be found at
 # http://someonewhocares.org/hosts/zero/
