@@ -2988,7 +2988,7 @@ ff02::2		ip6-allrouters
 ff02::3		ip6-allhosts
 #fe80::1%lo0	localhost
 #</localhost>
-#<other> #extra not included with Dan Pollocks blocklist afaik lazy to check at this point lol
+#<other> #extras not in Dan Pollocks blocklist - checked 2026-10-04: no overlap, no duplicates
 0.0.0.0	ac3.msn.com
 0.0.0.0	ads.msn.com
 0.0.0.0	statsfe1.ws.microsoft.com
