@@ -1996,13 +1996,13 @@ Function SetVisualEffectsPerformance {
 }
 
 Function BlocklistMNNSSM {
-    #Line 16344 is end of the blocklist
+    #Line 16338 is end of the blocklist
     #This function edits the system hostfile with Dan Pollocks BlockList as well as a few extra entries.
     $hostsloc = "C:\Windows\System32\Drivers\Etc\hosts"
     Write-Host "Grabbing hosts file" -ForegroundColor Yellow 
 
 	    
-    #FRAGMENT 2: the 13,446-line blocklist used to sit inline right here, which is why 89% of
+    #FRAGMENT 2: the 13,431-line blocklist used to sit inline right here, which is why 89% of
     #this script was data wedged into the middle of a function. It now lives in the EMBEDDED
     #DATA region near the bottom of the file, assigned to $script:MNNSSMBlocklist. Same bytes,
     #same 12,942 entries - it is just no longer sitting between you and the logic.
@@ -2989,33 +2989,18 @@ ff02::3		ip6-allhosts
 #fe80::1%lo0	localhost
 #</localhost>
 #<other> #extra not included with Dan Pollocks blocklist afaik lazy to check at this point lol
-0.0.0.0	a.ads1.msn.com
-0.0.0.0	a.ads2.msn.com
 0.0.0.0	ac3.msn.com
 0.0.0.0	ads.msn.com
-0.0.0.0	ads1.msn.com
-0.0.0.0	b.ads1.msn.com
 0.0.0.0	statsfe1.ws.microsoft.com
 0.0.0.0	statsfe2.update.microsoft.com.akadns.net
-0.0.0.0	statsfe2.ws.microsoft.com
 0.0.0.0	watson.microsoft.com
-0.0.0.0	a.rad.msn.com
-0.0.0.0	ads2.msn.com
 0.0.0.0	ads2.msn.com.c.footprint.net
-0.0.0.0	b.rad.msn.com
 0.0.0.0	c.msn.com
 0.0.0.0	corpext.msitadfs.glbdns2.microsoft.com
 0.0.0.0	fe2.update.microsoft.com.akadns.net
-0.0.0.0	feedback.microsoft-hohm.com
-0.0.0.0	flex.msn.com
 0.0.0.0	g.msn.com
-0.0.0.0	h1.msn.com
-0.0.0.0	live.rads.msn.com
 0.0.0.0	msnbot-207-46-194-33.search.msn.com
 0.0.0.0	msnbot-65-55-108-23.search.msn.com
-0.0.0.0	preview.msn.com
-0.0.0.0	rad.msn.com
-0.0.0.0	schemas.microsoft.akadns.net
 0.0.0.0	settings-sandbox.data.glbdns2.microsoft.com
 0.0.0.0	settings.data.glbdns2.microsoft.com
 0.0.0.0	sls.update.microsoft.com.akadns.net
