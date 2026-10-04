@@ -1,7 +1,7 @@
 # WindowsGG - winGG10&11.ps1
 ## Feature Reference (generation 3)
 
-639,655 bytes | 18,532 lines | 59 functions | 46 steps  (see addenda below)
+640,465 bytes | 18,545 lines | 59 functions | 46 steps  (see addenda below)
 ~2,661 lines of code, ~15,363 lines of embedded data
 Target: a freshly reformatted Windows 10/11 gaming PC.
 
@@ -173,8 +173,10 @@ that is the failure mode that strands a machine.
   3. NO UNDO PATH. Around 80 system changes with System Restore as the only
      reversal - and restore points age out.
 
-  4. HANGS IF RUN NON-INTERACTIVELY. The closing reboot prompt loops forever
-     without a console. Fine for double-click use, fatal for scheduled runs.
+  4. FIXED 2026-10-04 - was: hangs if run non-interactively. The closing reboot
+     prompt looped forever without a console, because Read-Host throws there and
+     every validity test then failed. It now gives up after ten attempts and
+     answers "nn" for itself, taking the existing no-reboot branch.
 
   5. DNS is forced to CloudFlare on every connected physical adapter. On a
      network that requires specific DNS this breaks resolution until reverted.
@@ -604,9 +606,9 @@ otherwise spin. The fallbacks are chosen per question: the network reset cancels
 its ending prompt leaves the machine running, and the cleanup tool's force-close
 prompt leaves applications running rather than killing them.
 
-**Note this is the same defect class as KNOWN LIMIT 4.** The tools now bound their
-prompts; the PS1's own closing reboot prompt still loops forever without a
-console. That limit stands.
+**This was the same defect class as KNOWN LIMIT 4**, and that one is now fixed too:
+the closing reboot prompt is bounded the same way, answering "nn" for itself after
+ten unusable attempts rather than spinning.
 
 Also in the network reset: the DNS restore no longer abandons every remaining
 adapter when one fails, and a three-option menu appears when it is launched with

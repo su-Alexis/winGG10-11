@@ -18385,11 +18385,19 @@ $rebootyn = '   For reboot with ASCII art Yes = y, ya, tak, da, si, ja
     Please enter below
 '
 
+#Bounded on purpose. Read-Host throws outright when there is no console to read
+#from, which left $response null, failed every validity test below, and looped
+#until the process was killed - KNOWN LIMIT 4. After ten attempts it answers 'nn'
+#for itself, which takes the existing no-reboot branch rather than adding a second
+#exit path. Skipping the reboot is the safe side of this question.
+$rebootTries = 0
 do {
     #Final sweep before the prompt. A banner left by any cmdlet earlier in the run will otherwise
     #sit across the top of the console covering this prompt and the closing countdown after it.
     Clear-ProgressBar
-    $response = Read-Host -Prompt $rebootyn
+    $rebootTries++
+    try   { $response = Read-Host -Prompt $rebootyn }
+    catch { $response = $null }
 
     $YesResponsesR = @(
     "y"
@@ -18422,6 +18430,11 @@ do {
      "nN" 
      "Nn"
     )
+    if ($rebootTries -ge 10 -and !(($YesResponsesR -eq $response) -or ($NoResponsesR -eq $response) -or ($InstaYesR -eq $response) -or ($InstaNoR -eq $response))) {
+        Write-Host ''
+        Write-Host '   No usable answer after 10 attempts - skipping the reboot.' -ForegroundColor DarkYellow
+        $response = 'nn'
+    }
     if (!(($YesResponsesR -eq $response) -or ($NoResponsesR -eq $response) -or ($InstaYesR -eq $response) -or ($InstaNoR -eq $response))) {
         "Incorrect input. . .
         " 
