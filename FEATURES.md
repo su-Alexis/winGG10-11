@@ -1,8 +1,8 @@
 # WindowsGG - winGG10&11.ps1
 ## Feature Reference (generation 3)
 
-660,255 bytes | 18,356 lines | 59 functions | 46 steps  (see addenda below)
-~2,661 lines of code, ~15,359 lines of embedded data
+639,655 bytes | 18,532 lines | 59 functions | 46 steps  (see addenda below)
+~2,661 lines of code, ~15,363 lines of embedded data
 Target: a freshly reformatted Windows 10/11 gaming PC.
 
 ---
@@ -78,7 +78,7 @@ A full transcript of every run lands in `C:\Temp\WindowsDebloat&Optimize`.
   (boot timer latency). UNTESTED ON REAL FIRMWARE - see the caution below.
 
 ### Network
-  21. Applying the hosts blocklist              12,942 sinkholed domains
+  21. Applying the hosts blocklist              13,108 sinkholed domains
   25. Setting DNS to CloudFlare                 1.1.1.1 / 1.0.0.1
   26. Resetting the local network stack
   37. Enabling DNS over HTTPS                   encrypts the CloudFlare queries
@@ -156,11 +156,14 @@ that is the failure mode that strands a machine.
 
 ## KNOWN LIMITS - READ BEFORE A LIVE MACHINE
 
-  1. AMSI FALSE POSITIVE, UNRESOLVED. Windows Defender flags the script as
+  1. AMSI FALSE POSITIVE, WORKED AROUND. Windows Defender flags the script as
      Trojan:BAT/CryptoDrainer.C!MTB when the hosts blocklist and the embedded
      cleanup .bat share one file. Either half alone is clean. With real-time
      protection ON - the default after a reformat - the script is refused at
-     parse time and does not run. Fix: move the cleanup .bat to a companion file.
+     parse time and does not run. The companion-file variant in AMSIfix\ now does
+     exactly that, so by the leave-one-out result above it should scan clean -
+     but that has not been re-verified against a live Defender install. The
+     single-file form is affected either way.
 
   2. NEVER TESTED ON REAL HARDWARE. Validated across 13 runs on a VMware guest
      only. The bcdedit boot-timer settings in particular are unverified against
@@ -220,7 +223,7 @@ That matters specifically for Vanguard (Valorant), which requires TPM 2.0 and
 Secure Boot on Windows 11 - both intact. EAC, BattlEye, FACEIT and ESEA
 inspect the same surface and are equally unaffected.
 
-The 12,942-entry hosts blocklist was checked against gaming and anti-cheat
+The 13,108-entry hosts blocklist was checked against gaming and anti-cheat
 domains. Steam, Riot, Battle.net, Epic, EasyAntiCheat, BattlEye, FACEIT,
 Discord, Xbox Live and the GPU vendors all resolve normally. The only genuine
 game domain blocked is mangler3/4.generals.ea.com - Command & Conquer Generals
@@ -515,3 +518,109 @@ isolated scope before the full script runs. That is how the Invoke-Silently
 refactor was verified: unit checks on the helper (failing probe, succeeding
 probe, -AsBool both ways) plus all three call sites, each confirmed to leave
 $Error.Count at 0.
+
+---
+
+# ADDENDUM 5 - BLOCKLIST REFRESH AND LICENCE CORRECTIONS (2026-10-04)
+
+## BLOCKLIST UPDATED TO CURRENT UPSTREAM
+
+The embedded list was replaced with the current someonewhocares.org/hosts/zero
+revision. **13,108 unique domains**, up from 12,942. Upstream had added 193 and
+dropped one (`ads.realcastmedia.com`) since the old copy was taken.
+
+Checked before overwriting 13,000 lines: of the domains in the old embedded list,
+exactly one was absent from current upstream, and that one was the upstream
+removal. So `#<other>` really was the only local customisation, and a wholesale
+replacement was safe. Had that number come back larger, the replacement would have
+silently discarded local edits.
+
+The data is now natively `0.0.0.0` form rather than `127.0.0.1`. The runtime
+rewrite at the top of `BlocklistMNNSSM` is consequently close to a no-op - it only
+still touches the single `127.0.0.1 local` line. Left in place; harmless.
+
+## #<other> CUT FROM 47 ENTRIES TO 21
+
+The section carried its own comment admitting the overlap with Dan Pollock's list
+had never been checked. It has now been checked, and the section was wrong in
+three separate ways:
+
+  10 entries   exact duplicates within the section - lines 1-10 of the block all
+               reappeared verbatim further down
+   1 entry     `watson.mi`, a truncated `watson.microsoft.com`. Blocking a domain
+               that does not exist. `watson.microsoft.com` was present in full
+  15 entries   already blocked by upstream, so doing nothing
+
+**The check that mattered:** total unique blocked domains is 13,108 both before
+and after the 15 were cut. If any of them had been doing real work that figure
+would have fallen. Overlap between the section and upstream is now zero.
+
+What survives is the genuinely distinctive material: the `vortex` and `settings`
+telemetry endpoints, the `glbdns2` and `nsatc.net` CDN variants, two `msnbot`
+crawlers, the `sls`/`fe2` update endpoints, and the `watson` crash-reporting
+hosts. None of those are in Dan Pollock's list.
+
+A `#</other>` closing marker was added to match every other section, and the
+entries were converted to `0.0.0.0` form for consistency with the rest of the file.
+
+## THE HOSTS FILE IS NOT CC BY-SA
+
+The script stated in two places that Dan Pollock's list was CC BY-SA 4.0. It is
+not. Neither the file header nor the published page mentions Creative Commons
+anywhere. The only stated terms are the author's own:
+
+> You are free to copy and distribute this file for non-commercial uses, as long
+> the original URL and attribution is included.
+
+That **restricts commercial use**, which CC BY-SA explicitly permits - so the old
+label claimed a more permissive licence than was actually granted. Both places are
+corrected and now quote the real wording. The source URL and attribution remain
+inside the embedded copy, which is what those terms require.
+
+This matters more now the script is published: anyone intending commercial use
+needs to replace the blocklist step or obtain permission from the author.
+
+## MIT LICENCE TEXT IN THE HEADER WAS DAMAGED
+
+The script's own MIT block had dropped a clause - it ran from "obtaining a copy"
+straight to "in the Software without restriction", omitting *"of this software and
+associated documentation files (the "Software"), to deal"*. Without it the grant
+has no object. It also ended `OFTWARE.` instead of `SOFTWARE.`
+
+Both repaired, and verified rather than eyeballed: the corrected body was diffed
+against Syncex's copy in the same header, which was intact all along, and the two
+are now character-identical.
+
+## THE THREE DESKTOP TOOLS: NO MORE BEEP
+
+All three used `choice.exe` for their prompts. It beeps at the console on any key
+outside its list and has no flag to silence that. All five prompts across the
+three tools now read a line and re-ask quietly instead, with identical accepted
+answers.
+
+Each loop caps at ten unusable answers rather than looping forever - `set /p`
+returns an empty string instantly when stdin is not a console, which would
+otherwise spin. The fallbacks are chosen per question: the network reset cancels,
+its ending prompt leaves the machine running, and the cleanup tool's force-close
+prompt leaves applications running rather than killing them.
+
+**Note this is the same defect class as KNOWN LIMIT 4.** The tools now bound their
+prompts; the PS1's own closing reboot prompt still loops forever without a
+console. That limit stands.
+
+Also in the network reset: the DNS restore no longer abandons every remaining
+adapter when one fails, and a three-option menu appears when it is launched with
+no arguments.
+
+## PUBLISHED
+
+The script and its three tools are now public repositories:
+
+  winGG10-11            this script, as winGG10&11.ps1
+  Windows-Cleanup       cleanup_main.bat
+  Network-Stack-Reset   net-reset-reboot.bat
+  Network-Refresh       net-reset-lite.bat
+
+Each tool repo holds the authoritative documentation for that tool. The copies
+embedded here are what get written to the Desktop, and they do not update
+themselves when a repo changes - they are separate copies needing their own commit.
