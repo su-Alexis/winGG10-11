@@ -80,3 +80,7 @@ itself over.
 ## License
 
 MIT — see [LICENSE](LICENSE). Syncex's original script is also MIT.
+
+One carve-out: the embedded hosts blocklist is Dan Pollock's work, licensed
+**CC BY-SA 4.0**, and is not covered by the MIT license above. It is reproduced
+with attribution, as the script header records.
