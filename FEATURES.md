@@ -1,7 +1,7 @@
 # WindowsGG - winGG10&11.ps1
 ## Feature Reference (generation 3)
 
-647,307 bytes | 18,676 lines | 59 functions | 46 steps  (see addenda below)
+648,112 bytes | 18,689 lines | 59 functions | 46 steps  (see addenda below)
 ~2,661 lines of code, ~15,363 lines of embedded data
 Target: a freshly reformatted Windows 10/11 gaming PC.
 
@@ -667,3 +667,27 @@ The VT probe was also moved ahead of it. redundantColors emits VT escapes on its
 first path, and those only work once ENABLE_VIRTUAL_TERMINAL_PROCESSING is on - so
 enabling VT after the first colour call left that path doing nothing on a console
 that had not already opted in.
+
+## WHY THE CLOSING ART BROKE ON ONE MACHINE AND NOT ANOTHER
+
+The reveal repaints the art in place every frame, which means it has to know which
+screen row the art starts on. It captured that row BEFORE writing the blank lines
+that reserve the space - and writing those lines scrolls the window whenever the
+cursor is near the bottom. After a scroll everything has moved up, so the saved row
+points somewhere else and every subsequent frame repaints in the wrong place. The
+result is smeared, broken-looking art.
+
+Whether it happened came down to window height. The closing art is 32 rows. On a
+tall window there was room and nothing scrolled, so it looked perfect. On a short
+one - 33 rows, say - reserving 32 rows from anywhere but the very top guaranteed a
+scroll, and it broke every time. Same code, same script, opposite result, which is
+what made it look inconsistent rather than simply wrong.
+
+Two changes. The row is now derived AFTER the blank lines, from where the cursor
+actually ended up, so however many rows scrolled are absorbed automatically. And
+art taller than the window now falls back to a plain print, because there is no way
+to repaint in place something that does not fit.
+
+The two closing-art calls also pass -ClearFirst, so the art starts at row 0 and has
+the whole window to itself. Those branches clear the screen immediately afterwards
+anyway, so nothing is lost.

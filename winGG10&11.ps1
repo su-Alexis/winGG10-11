@@ -548,7 +548,8 @@ Function Show-ArtReveal {
         [string]$Art,
         [ValidateSet('Sweep','Rain')][string]$Style = 'Sweep',
         [ValidateSet('Banner','Leaf')][string]$Theme = 'Banner',
-        [int]$FrameMs = 45
+        [int]$FrameMs = 45,
+        [switch]$ClearFirst
     )
 
     $rows = $Art -split "`r?`n"
@@ -560,7 +561,11 @@ Function Show-ArtReveal {
     #fall back to a plain print when there is no console to animate on, when VT is
     #unavailable, or when the art is wider than the window and would wrap.
     $tooWide = $false
-    try { $tooWide = ($BW -ge $Host.UI.RawUI.WindowSize.Width) } catch { $tooWide = $true }
+    try {
+        $win = $Host.UI.RawUI.WindowSize
+        #too wide wraps and shreds the alignment; too tall cannot be repainted in place
+        $tooWide = ($BW -ge $win.Width) -or ($BH -ge $win.Height)
+    } catch { $tooWide = $true }
     if (-not $script:CanAnimate -or -not $script:VTOK -or $tooWide) {
         if ($Theme -eq 'Leaf') { Write-Host $Art -ForegroundColor DarkGreen }
         else { Write-Gradient -Text $Art -Palette DarkCyan,Cyan,White,Cyan,DarkCyan,Blue -DelayMs 0 }
@@ -584,8 +589,16 @@ Function Show-ArtReveal {
         for ($x = 0; $x -lt $BW; $x++) { $grid[$x + $BW*$y] = $line[$x] }
     }
 
-    $top = [Console]::CursorTop
+    #Anchor AFTER the blank lines, not before. Writing $BH blank lines scrolls the
+    #window whenever the cursor is near the bottom, which moves everything up - so a
+    #$top captured beforehand points at a row that has since shifted, and every frame
+    #then repaints in the wrong place. That is the smeared art you get on a short
+    #window: tall art plus any preceding output guarantees a scroll. Deriving $top
+    #from where the cursor ENDED UP absorbs however many rows actually scrolled.
+    if ($ClearFirst) { try { Clear-Host } catch { } }
     for ($i = 0; $i -lt $BH; $i++) { Write-Host '' }
+    $top = [Console]::CursorTop - $BH
+    if ($top -lt 0) { $top = 0 }
     try { [Console]::CursorVisible = $false } catch { }
 
     $rnd   = New-Object System.Random
@@ -18613,7 +18626,7 @@ do {
               \_/***-*                           `-*--(_,`*`-`
                 Your PC will reboot in 4 seconds. . . 
 '
-        Show-ArtReveal -Art $Venasaur -Style Rain -Theme Leaf -FrameMs 45
+        Show-ArtReveal -Art $Venasaur -Style Rain -Theme Leaf -FrameMs 45 -ClearFirst
         Start-Sleep 4
         redundantColors -Background Black -Foreground White -ClearScreen
         CleanMemoryy
@@ -18662,7 +18675,7 @@ do {
  `*^--*..*   *-`-^-**--    `-^-*`.*******`.,^.`.--* 
                 Reboot is skipped. . . 
 '
-        Show-ArtReveal -Art $bisstarter -Style Rain -Theme Leaf -FrameMs 45
+        Show-ArtReveal -Art $bisstarter -Style Rain -Theme Leaf -FrameMs 45 -ClearFirst
         Write-Host "" 
         Start-Sleep 4
         redundantColors -Background Black -Foreground White -ClearScreen
