@@ -595,16 +595,30 @@ Function Show-ArtReveal {
         #without it the art has to fit with the cursor somewhere below it.
         if ($ClearFirst) { $fits = ($BH -le $winH) } else { $fits = ($BH -lt $winH) }
         #Art taller than the window cannot be repainted in place - the whole block has
-        #to be visible at once. Growing the console was tried and abandoned: a normal
-        #screen at a normal font size reports MaxWindowSize of 30 rows, which is a hard
-        #ceiling, so a 32-row piece of art can never fit. That art uses Show-ArtCascade
-        #instead, which rewrites one line at a time and does not care about height.
+        #to be visible at once. Growing the console was tried and abandoned: MaxWindowSize
+        #is itself capped by the BUFFER, so a 120x30 buffer reports a 30-row ceiling that
+        #is not the screen's real limit - MaxPhysicalWindowSize is. Growing it properly
+        #means resizing buffer and window together, in the right order, and a resize is
+        #still refused outright once MaxWindowSize equals the current window. Not worth
+        #it for art that has a height-independent path available: Show-ArtCascade
+        #rewrites one line at a time and does not care about height at all.
 
         $cantFit = ($BW -ge $win.Width) -or (-not $fits)
     } catch { $cantFit = $true }
-    if (-not $script:CanAnimate -or -not $script:VTOK -or $cantFit) {
+    #Adaptive, because this runs on whatever machine it lands on. Three outcomes:
+    #  no console or no VT   -> plain print, nothing animated is possible
+    #  will not fit on screen -> hand to Show-ArtCascade, which rewrites one line at
+    #                            a time and so does not care how tall the art is
+    #  fits                   -> animate in place, the effect that was asked for
+    #Screen geometry varies wildly - laptop, big console font, high DPI, RDP - so the
+    #decision is made at runtime per machine rather than assumed.
+    if (-not $script:CanAnimate -or -not $script:VTOK) {
         if ($Theme -eq 'Leaf') { Write-Host $Art -ForegroundColor DarkGreen }
         else { Write-Gradient -Text $Art -Palette DarkCyan,Cyan,White,Cyan,DarkCyan,Blue -DelayMs 0 }
+        return
+    }
+    if ($cantFit) {
+        Show-ArtCascade -Art $Art -Theme $Theme -StepMs 18 -Steps 3
         return
     }
 
@@ -18739,7 +18753,7 @@ do {
               \_/***-*                           `-*--(_,`*`-`
                 Your PC will reboot in 4 seconds. . . 
 '
-        Show-ArtCascade -Art $Venasaur -Theme Leaf -StepMs 18 -Steps 3
+        Show-ArtReveal -Art $Venasaur -Style Rain -Theme Leaf -FrameMs 45 -ClearFirst
         Start-Sleep 4
         redundantColors -Background Black -Foreground White -ClearScreen
         CleanMemoryy
@@ -18788,7 +18802,7 @@ do {
  `*^--*..*   *-`-^-**--    `-^-*`.*******`.,^.`.--* 
                 Reboot is skipped. . . 
 '
-        Show-ArtCascade -Art $bisstarter -Theme Leaf -StepMs 18 -Steps 3
+        Show-ArtReveal -Art $bisstarter -Style Rain -Theme Leaf -FrameMs 45 -ClearFirst
         Write-Host "" 
         Start-Sleep 4
         redundantColors -Background Black -Foreground White -ClearScreen

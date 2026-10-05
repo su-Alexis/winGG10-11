@@ -743,3 +743,117 @@ Restore-ConsoleColour fixes it by re-asserting the host's CURRENT RawUI colours 
 VT escapes when an animation finishes, rather than resetting to a default that was
 never what the script was using. It reads the colours from the host rather than
 hardcoding them, so it stays correct if the scheme changes.
+
+# ADDENDUM 6 - ADAPTIVE ART FALLBACK (2026-10-05)
+
+## THE PROBLEM THE PREVIOUS FIX LEFT BEHIND
+
+ADDENDUM 5 ended with the closing art calling Show-ArtCascade directly, because the
+rain reveal could not handle 32 rows. That worked, but it hardcoded the answer. The
+cascade ran on every machine, including the ones with a window tall enough for the
+rain reveal the effect was actually designed for. A 90-row console got the fallback
+for no reason.
+
+That is the wrong shape for this script. It is a baselining script - it runs on
+whatever machine it lands on, once, on a fresh install. Console geometry on those
+machines varies wildly: a laptop at a large console font, a 4K panel at 150% DPI, an
+RDP session, a VM with an 80x25 default. There is no single correct choice to bake in,
+so the choice is now made at runtime, per machine.
+
+## THE CHAIN
+
+Show-ArtReveal now resolves to one of three outcomes:
+
+  no console, or no VT     -> plain print. Nothing animated is possible at all.
+  will not fit on screen   -> Show-ArtCascade, which rewrites one line at a time and
+                              therefore does not care how tall the art is.
+  fits                     -> animate in place, the effect that was asked for.
+
+The closing-art calls went back to Show-ArtReveal -Style Rain -ClearFirst. They no
+longer name the fallback. They ask for rain, and degrade to the cascade by themselves
+on a machine that cannot show it. On a tall console they now rain properly, which they
+never did under ADDENDUM 5.
+
+## THE HEIGHT BOUNDARY IS NOT ONE COMPARISON
+
+Whether art "fits" depends on how it was called, and the two cases differ by exactly
+one row. With -ClearFirst the art starts at row 0 and may use the whole window, so the
+test is $BH -le $winH. Without it the cursor has to end up somewhere below the art, so
+the art needs a row spare: $BH -lt $winH.
+
+Getting this backwards does not crash. It silently picks the wrong branch on art that
+is exactly window height, which is the one case nobody tests by eye. It is asserted
+both ways now.
+
+## TOO WIDE TAKES TWO HOPS, NOT ONE
+
+Art wider than the window is counted as not fitting, so it goes to Show-ArtCascade -
+which then applies its OWN width check and plain-prints it. Two functions, two guards,
+and the art comes out flat.
+
+That is correct behaviour, but it is worth writing down, because the outcome is
+indistinguishable from a direct plain print by eye or by stopwatch. Both finish
+instantly and both print flat art. Only the path differs, and a test that measured
+duration would have scored a broken chain as passing.
+
+## CORRECTION TO ADDENDUM 5
+
+ADDENDUM 5 states that a normal screen at a normal font size reports MaxWindowSize of
+30 rows, and calls that "a hard ceiling set by the display". That is wrong, and the
+comment in the script said the same thing. Both are now corrected.
+
+MaxWindowSize is itself capped by the BUFFER. A 120x30 buffer reports a 30-row
+MaxWindowSize no matter how large the display is. The real screen-and-font ceiling is
+MaxPhysicalWindowSize, which is considerably larger. The earlier attempt at growing the
+window checked the buffer-capped value before growing the buffer, so it concluded the
+window could not grow when in fact nothing had been asked of the screen yet.
+
+Growing the console is still not being done - it needs buffer and window resized
+together in the right order, and a resize is refused outright once MaxWindowSize
+equals the current window size. The point of the correction is that the reason
+recorded for abandoning it was false, and a false reason in a comment is worse than no
+comment, because it stops anyone revisiting the decision.
+
+## HOW THE CHAIN WAS TESTED
+
+adaptive-test.ps1, kept on the Desktop and disposable. Two things about it are
+deliberate.
+
+First, it does not contain a copy of the animation code. The VT probe, $script:VTIndex,
+Restore-ConsoleColour, Write-Gradient, $script:CanAnimate, Show-ArtReveal and
+Show-ArtCascade are lifted verbatim out of this script and each block checked
+md5-identical to its source lines. A test holding a reimplementation drifts, passes,
+and proves nothing about the shipped file.
+
+Second, it does not infer the branch from how long a call took. It captures the real
+Show-ArtCascade and Write-Gradient, shadows those names with spies that record the path
+and then call through, and shadows Write-Host to catch plain prints - a whole-art
+multi-line argument is the signature of one, while per-character and blank-line calls
+are ignored. Each case asserts the path actually taken, with timing kept only as a
+secondary check that frames genuinely ran.
+
+Eleven branches are asserted: both themes fitting, too tall, too wide (expecting the
+two-hop cascade,plain), the height boundary in both -ClearFirst states, VT forced off
+in both themes, and CanAnimate forced off in both themes. The Banner theme degrades
+twice when there is no console, because Write-Gradient carries its own CanAnimate
+guard, so the expected trace there is gradient,plain.
+
+All eleven pass.
+
+The harness itself was smoke-tested headlessly first, where output redirection forces
+CanAnimate false and every case must plain-print. That both proves the spy plumbing and
+exercises the no-console branch, so a failure on a real console means the chain is
+wrong and not the test.
+
+## ONE THING FOUND AND NOT CHANGED
+
+Restore-ConsoleColour writes VT escapes without checking $script:VTOK. With VT
+unavailable it emits [38;5;7m into the output as literal text.
+
+This script is not affected. Both call sites sit after the plain-print early-returns in
+Show-ArtReveal and Show-ArtCascade, so the function is only ever reached when VT is on
+and an animation actually ran. It was the test harness calling it unconditionally that
+exposed this, and the harness now guards it the same way the script does.
+
+It is recorded here because it is a trap for any future call site, not a present bug. A
+single early return on -not $script:VTOK would close it permanently.
