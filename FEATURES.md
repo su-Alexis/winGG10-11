@@ -1,7 +1,7 @@
 # WindowsGG - winGG10&11.ps1
 ## Feature Reference (generation 3)
 
-648,112 bytes | 18,689 lines | 59 functions | 46 steps  (see addenda below)
+652,571 bytes | 18,786 lines | 59 functions | 46 steps  (see addenda below)
 ~2,661 lines of code, ~15,363 lines of embedded data
 Target: a freshly reformatted Windows 10/11 gaming PC.
 
@@ -691,3 +691,26 @@ to repaint in place something that does not fit.
 The two closing-art calls also pass -ClearFirst, so the art starts at row 0 and has
 the whole window to itself. Those branches clear the screen immediately afterwards
 anyway, so nothing is lost.
+
+## THE CLOSING ART NEEDED A DIFFERENT TECHNIQUE ENTIRELY
+
+The rain reveal repaints a fixed block every frame, which means the whole block has
+to be on screen at once. The closing art is 32 rows. A console cannot exceed
+MaxWindowSize, and a normal screen at a normal font size reports 30 rows - a hard
+ceiling set by the display, not a preference. 32 into 30 does not go, so that art
+could never reveal in place, and could not even be printed in full without the top
+scrolling away.
+
+Growing the window was tried and abandoned: the resize is refused outright when
+MaxWindowSize is already the window size. Trimming was not an option either - every
+one of the 32 rows has ink in it, and dropping the caption line still leaves 31.
+
+Show-ArtCascade solves it by never repainting a block. It rewrites only the CURRENT
+line with a carriage return, then emits a newline and moves on, so finished lines
+scroll away like ordinary output and the total height stops mattering. Each line
+materialises left to right, dim noise resolving into the real characters. About two
+seconds for the 32 rows, and it behaves identically on a 30-row console or a 90-row
+one.
+
+The opening banner keeps the sweep. At 19 rows it fits anywhere, so repainting in
+place is fine for it.

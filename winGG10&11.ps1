@@ -560,13 +560,24 @@ Function Show-ArtReveal {
 
     #fall back to a plain print when there is no console to animate on, when VT is
     #unavailable, or when the art is wider than the window and would wrap.
-    $tooWide = $false
+    $cantFit = $false
+    $winH    = 0
     try {
-        $win = $Host.UI.RawUI.WindowSize
-        #too wide wraps and shreds the alignment; too tall cannot be repainted in place
-        $tooWide = ($BW -ge $win.Width) -or ($BH -ge $win.Height)
-    } catch { $tooWide = $true }
-    if (-not $script:CanAnimate -or -not $script:VTOK -or $tooWide) {
+        $win  = $Host.UI.RawUI.WindowSize
+        $winH = $win.Height
+        #Too wide always wraps and shreds the alignment. Too tall depends on where it
+        #starts: with -ClearFirst the art begins at row 0 and can use the whole window,
+        #without it the art has to fit with the cursor somewhere below it.
+        if ($ClearFirst) { $fits = ($BH -le $winH) } else { $fits = ($BH -lt $winH) }
+        #Art taller than the window cannot be repainted in place - the whole block has
+        #to be visible at once. Growing the console was tried and abandoned: a normal
+        #screen at a normal font size reports MaxWindowSize of 30 rows, which is a hard
+        #ceiling, so a 32-row piece of art can never fit. That art uses Show-ArtCascade
+        #instead, which rewrites one line at a time and does not care about height.
+
+        $cantFit = ($BW -ge $win.Width) -or (-not $fits)
+    } catch { $cantFit = $true }
+    if (-not $script:CanAnimate -or -not $script:VTOK -or $cantFit) {
         if ($Theme -eq 'Leaf') { Write-Host $Art -ForegroundColor DarkGreen }
         else { Write-Gradient -Text $Art -Palette DarkCyan,Cyan,White,Cyan,DarkCyan,Blue -DelayMs 0 }
         return
@@ -595,10 +606,17 @@ Function Show-ArtReveal {
     #then repaints in the wrong place. That is the smeared art you get on a short
     #window: tall art plus any preceding output guarantees a scroll. Deriving $top
     #from where the cursor ENDED UP absorbs however many rows actually scrolled.
-    if ($ClearFirst) { try { Clear-Host } catch { } }
-    for ($i = 0; $i -lt $BH; $i++) { Write-Host '' }
-    $top = [Console]::CursorTop - $BH
-    if ($top -lt 0) { $top = 0 }
+    if ($ClearFirst) {
+        #after a clear the screen is empty and the cursor is at 0,0 - so the art can
+        #simply start there. Skipping the reserve lines also skips the scroll they
+        #would cause, which is what broke this in the first place.
+        try { Clear-Host } catch { }
+        $top = 0
+    } else {
+        for ($i = 0; $i -lt $BH; $i++) { Write-Host '' }
+        $top = [Console]::CursorTop - $BH
+        if ($top -lt 0) { $top = 0 }
+    }
     try { [Console]::CursorVisible = $false } catch { }
 
     $rnd   = New-Object System.Random
@@ -655,7 +673,86 @@ Function Show-ArtReveal {
         }
     }
 
-    [Console]::SetCursorPosition(0, $top + $BH)
+    $end = $top + $BH
+    if ($winH -gt 0 -and $end -gt ($winH - 1)) { $end = $winH - 1 }
+    try { [Console]::SetCursorPosition(0, $end) } catch { }
+    try { [Console]::CursorVisible = $true } catch { }
+}
+
+#ADDED: a reveal that does NOT depend on window height.
+#
+#Show-ArtReveal repaints a fixed block every frame, so the whole block has to be
+#on screen at once. The closing art is 32 rows and a console caps out at whatever
+#MaxWindowSize allows - 30 rows on a normal screen at a normal font size. 32 into
+#30 does not go, animated or otherwise, so that art could never reveal in place.
+#
+#Cascade only ever rewrites the CURRENT line with a carriage return, then emits a
+#newline and moves on. Finished lines scroll away like any other output, so the
+#total height is irrelevant - it behaves the same on a 30-row console as a 90-row
+#one. Each line materialises left to right, dim noise resolving into the real
+#characters, which reads like the drawing is being scanned in.
+Function Show-ArtCascade {
+    param(
+        [string]$Art,
+        [ValidateSet('Banner','Leaf')][string]$Theme = 'Leaf',
+        [int]$StepMs = 18,
+        [int]$Steps  = 3
+    )
+    $rows = $Art -split "`r?`n"
+    while ($rows.Count -gt 1 -and $rows[0].Trim()  -eq '') { $rows = $rows[1..($rows.Count-1)] }
+    while ($rows.Count -gt 1 -and $rows[-1].Trim() -eq '') { $rows = $rows[0..($rows.Count-2)] }
+
+    $wide = $false
+    try {
+        $maxLen = 0; foreach ($r in $rows) { if ($r.Length -gt $maxLen) { $maxLen = $r.Length } }
+        $wide = ($maxLen -ge $Host.UI.RawUI.WindowSize.Width)
+    } catch { $wide = $true }
+    if (-not $script:CanAnimate -or -not $script:VTOK -or $wide) {
+        if ($Theme -eq 'Leaf') { Write-Host $Art -ForegroundColor DarkGreen } else { Write-Host $Art }
+        return
+    }
+
+    $esc = [char]27
+    if ($Theme -eq 'Leaf') {
+        $pal = @(@(20,120,40), @(60,180,70), @(140,230,140), @(60,180,70), @(20,120,40), @(10,90,30))
+        $dim = "$esc[38;2;15;95;35m"
+    } else {
+        $pal = @(@(0,139,139), @(0,220,220), @(235,255,255), @(0,220,220), @(0,139,139), @(40,90,220))
+        $dim = "$esc[38;2;0;110;110m"
+    }
+    $noise = '8.*dPYb:;=-~'.ToCharArray()
+    $rnd   = New-Object System.Random
+    $sb    = New-Object System.Text.StringBuilder
+
+    try { [Console]::CursorVisible = $false } catch { }
+    for ($y = 0; $y -lt $rows.Count; $y++) {
+        $line = $rows[$y]
+        $len  = $line.Length
+        for ($s = 1; $s -le $Steps; $s++) {
+            $shown = [int][Math]::Ceiling($len * $s / $Steps)
+            $null = $sb.Clear()
+            $null = $sb.Append("`r")
+            $lastCol = ''
+            for ($x = 0; $x -lt $len; $x++) {
+                $ch = $line[$x]
+                if ($ch -eq ' ') { $null = $sb.Append(' '); continue }
+                if ($x -lt $shown) {
+                    $p = $pal[($x + $y) % $pal.Count]
+                    $c = "$esc[38;2;$($p[0]);$($p[1]);$($p[2])m"
+                    $o = $ch
+                } else {
+                    $c = $dim
+                    $o = $noise[$rnd.Next($noise.Count)]
+                }
+                if ($c -ne $lastCol) { $null = $sb.Append($c); $lastCol = $c }
+                $null = $sb.Append($o)
+            }
+            $null = $sb.Append("$esc[0m")
+            [Console]::Write($sb.ToString())
+            if ($s -lt $Steps) { Start-Sleep -Milliseconds $StepMs }
+        }
+        [Console]::Write("`n")
+    }
     try { [Console]::CursorVisible = $true } catch { }
 }
 
@@ -18626,7 +18723,7 @@ do {
               \_/***-*                           `-*--(_,`*`-`
                 Your PC will reboot in 4 seconds. . . 
 '
-        Show-ArtReveal -Art $Venasaur -Style Rain -Theme Leaf -FrameMs 45 -ClearFirst
+        Show-ArtCascade -Art $Venasaur -Theme Leaf -StepMs 18 -Steps 3
         Start-Sleep 4
         redundantColors -Background Black -Foreground White -ClearScreen
         CleanMemoryy
@@ -18675,7 +18772,7 @@ do {
  `*^--*..*   *-`-^-**--    `-^-*`.*******`.,^.`.--* 
                 Reboot is skipped. . . 
 '
-        Show-ArtReveal -Art $bisstarter -Style Rain -Theme Leaf -FrameMs 45 -ClearFirst
+        Show-ArtCascade -Art $bisstarter -Theme Leaf -StepMs 18 -Steps 3
         Write-Host "" 
         Start-Sleep 4
         redundantColors -Background Black -Foreground White -ClearScreen
