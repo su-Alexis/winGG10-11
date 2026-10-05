@@ -450,6 +450,31 @@ try {
     }
 } catch { $script:VTOK = $false }
 
+#ADDED: the 16 console colours as VT indexes, so an animation can put back exactly
+#the colours the script was using. Resetting to "default" is not the same thing:
+#redundantColors sets the foreground through RawUI, and a VT default-foreground
+#escape overrides that for everything printed afterwards - which is how the package
+#removal output ended up white instead of following the colour table.
+$script:VTIndex = @{
+    'Black'=0; 'DarkRed'=1; 'DarkGreen'=2; 'DarkYellow'=3
+    'DarkBlue'=4; 'DarkMagenta'=5; 'DarkCyan'=6; 'Gray'=7
+    'DarkGray'=8; 'Red'=9; 'Green'=10; 'Yellow'=11
+    'Blue'=12; 'Magenta'=13; 'Cyan'=14; 'White'=15
+}
+
+Function Restore-ConsoleColour {
+    #Re-asserts the host's current colours as VT escapes, so animation state does not
+    #leak into the rest of the run.
+    try {
+        $e = [char]27
+        $f = "$($Host.UI.RawUI.ForegroundColor)"
+        $b = "$($Host.UI.RawUI.BackgroundColor)"
+        if ($script:VTIndex.ContainsKey($f) -and $script:VTIndex.ContainsKey($b)) {
+            [Console]::Write($e + '[38;5;' + $script:VTIndex[$f] + 'm' + $e + '[48;5;' + $script:VTIndex[$b] + 'm')
+        }
+    } catch { }
+}
+
 #Set the terminal to the script's colours before anything prints.
 #-ClearScreen matters: setting BackgroundColor alone only affects cells written
 #AFTERWARDS. Without a clear, the buffer keeps the console default - which is why
@@ -632,6 +657,7 @@ Function Show-ArtReveal {
             $done = $true
             for ($x = 0; $x -lt $BW; $x++) { if ($drop[$x] -le $BH) { $done = $false }; $drop[$x] += $spd[$x] }
             $null = $sb.Clear(); $lastCol = ''
+            $null = $sb.Append("$esc[48;5;0m")   #keep the black background; a bare reset drops to the console default
             for ($y = 0; $y -lt $BH; $y++) {
                 for ($x = 0; $x -lt $BW; $x++) {
                     $hy = [int]$drop[$x]
@@ -644,7 +670,7 @@ Function Show-ArtReveal {
                 }
                 if ($y -lt $BH-1) { $null = $sb.Append("`n") }
             }
-            $null = $sb.Append("$esc[0m")
+            $null = $sb.Append("$esc[39m")
             [Console]::SetCursorPosition(0, $top)
             [Console]::Write($sb.ToString())
             if ($done) { break }
@@ -655,6 +681,7 @@ Function Show-ArtReveal {
         for ($edge = 0; $edge -le $BW + 6; $edge += 2) {
             $fsw = [System.Diagnostics.Stopwatch]::StartNew()
             $null = $sb.Clear(); $lastCol = ''
+            $null = $sb.Append("$esc[48;5;0m")   #keep the black background; a bare reset drops to the console default
             for ($y = 0; $y -lt $BH; $y++) {
                 for ($x = 0; $x -lt $BW; $x++) {
                     if ($x -lt $edge - 3)   { $p = $pal[($x + $y) % $pal.Count]; $c = "$esc[38;2;$($p[0]);$($p[1]);$($p[2])m"; $o = $grid[$x + $BW*$y] }
@@ -665,7 +692,7 @@ Function Show-ArtReveal {
                 }
                 if ($y -lt $BH-1) { $null = $sb.Append("`n") }
             }
-            $null = $sb.Append("$esc[0m")
+            $null = $sb.Append("$esc[39m")
             [Console]::SetCursorPosition(0, $top)
             [Console]::Write($sb.ToString())
             $rem = $FrameMs - $fsw.Elapsed.TotalMilliseconds
@@ -677,6 +704,7 @@ Function Show-ArtReveal {
     if ($winH -gt 0 -and $end -gt ($winH - 1)) { $end = $winH - 1 }
     try { [Console]::SetCursorPosition(0, $end) } catch { }
     try { [Console]::CursorVisible = $true } catch { }
+    Restore-ConsoleColour
 }
 
 #ADDED: a reveal that does NOT depend on window height.
@@ -732,6 +760,7 @@ Function Show-ArtCascade {
             $shown = [int][Math]::Ceiling($len * $s / $Steps)
             $null = $sb.Clear()
             $null = $sb.Append("`r")
+            $null = $sb.Append("$esc[48;5;0m")   #keep the black background; a bare reset drops to the console default
             $lastCol = ''
             for ($x = 0; $x -lt $len; $x++) {
                 $ch = $line[$x]
@@ -747,13 +776,14 @@ Function Show-ArtCascade {
                 if ($c -ne $lastCol) { $null = $sb.Append($c); $lastCol = $c }
                 $null = $sb.Append($o)
             }
-            $null = $sb.Append("$esc[0m")
+            $null = $sb.Append("$esc[39m")
             [Console]::Write($sb.ToString())
             if ($s -lt $Steps) { Start-Sleep -Milliseconds $StepMs }
         }
         [Console]::Write("`n")
     }
     try { [Console]::CursorVisible = $true } catch { }
+    Restore-ConsoleColour
 }
 
 #Cmdlets that emit progress records are supposed to send a final "completed" record when they
@@ -3024,39 +3054,25 @@ $Random = New-Object System.Random
 #console cannot animate (redirected/piped output) Write-Gradient falls back to a plain
 #Write-Host, so nothing is lost when this script is run non-interactively.
 $bannerArt = "
-888       888  d888   .d8888b.       .d8888b.           888       888  d888    d888  
-888   o   888 d8888  d88P  Y88b     d88P  *88b          888   o   888 d8888   d8888  
-888  d8b  888   888  888    888     Y88b. d88P          888  d8b  888   888     888  
-888 d888b 888   888  888    888      *Y8888P*           888 d888b 888   888     888  
-888d88888b888   888  888    888     .d88P88K.d88P       888d88888b888   888     888  
-88888P Y88888   888  888    888     888*  Y888P*        88888P Y88888   888     888  
-8888P   Y8888   888  Y88b  d88P     Y88b .d8888b        8888P   Y8888   888     888  
-888P     Y888 8888888 *Y8888P*       *Y8888P* Y88b      888P     Y888 8888888 8888888
-                                                                                     
-                                                                                     
-                                                                                     
-8888888b.           888      888                   888         .d8888b.              
-888  *Y88b          888      888                   888        d88P  *88b             
-888    888          888      888                   888        Y88b. d88P             
-888    888  .d88b.  88888b.  888  .d88b.   8888b.  888888      *Y8888P*              
-888    888 d8P  Y8b 888 *88b 888 d88**88b     *88b 888        .d88P88K.d88P          
-888    888 88888888 888  888 888 888  888 .d888888 888        888*  Y888P*           
-888  .d88P Y8b.     888 d88P 888 Y88..88P 888  888 Y88b.      Y88b .d8888b           
-8888888P*   *Y8888  88888P*  888  *Y88P*  *Y888888  *Y888      *Y8888P* Y88b         
-                                                                                     
-                                                                                     
-                                                                                     
- .d88888b.           888    d8b               d8b                                    
-d88P* *Y88b          888    Y8P               Y8P                                    
-888     888          888                                                             
-888     888 88888b.  888888 888 88888b.d88b.  888 88888888  .d88b.                   
-888     888 888 *88b 888    888 888 *888 *88b 888    d88P  d8P  Y8b                  
-888     888 888  888 888    888 888  888  888 888   d88P   88888888                  
-Y88b. .d88P 888 d88P Y88b.  888 888  888  888 888  d88P    Y8b.                      
- *Y88888P*  88888P*   *Y888 888 888  888  888 888 88888888  *Y8888                   
-            888                                                                      
-            888                                                                      
-            888                                                                       
+888       888  d8b                .d8888b.     .d8888b.  
+888   o   888  Y8P               d88P  Y88b   d88P  Y88b 
+888  d8b  888                    888    888   888    888 
+888 d888b 888 888   88888b.      888          888        
+888d88888b888 888   888 *88b     888  88888   888  88888 
+88888P Y88888 888   888  888     888    888   888    888 
+8888P   Y8888 888   888  888     Y88b  d88P   Y88b  d88P 
+888P     Y888 888   888  888      *Y8888P*     *Y8888P*  
+
+  d888   .d8888b.     .d8888b.         d888    d888  
+ d8888  d88P  Y88b   d88P  *88b       d8888   d8888  
+   888  888    888   Y88b. d88P         888     888  
+   888  888    888    *Y8888P*          888     888  
+   888  888    888   .d88P88K.d88P      888     888  
+   888  888    888   888*  Y888P*       888     888  
+   888  Y88b  d88P   Y88b .d8888b       888     888  
+ 8888888 *Y8888P*     *Y8888P* Y88b   8888888 8888888
+
+          D e b l o a t   a n d   O p t i m i z e
 " 
 Show-ArtReveal -Art $bannerArt -Style Sweep -Theme Banner -FrameMs 45
 Start-Sleep 1

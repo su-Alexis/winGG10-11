@@ -1,7 +1,7 @@
 # WindowsGG - winGG10&11.ps1
 ## Feature Reference (generation 3)
 
-652,571 bytes | 18,786 lines | 59 functions | 46 steps  (see addenda below)
+652,262 bytes | 18,802 lines | 59 functions | 46 steps  (see addenda below)
 ~2,661 lines of code, ~15,363 lines of embedded data
 Target: a freshly reformatted Windows 10/11 gaming PC.
 
@@ -714,3 +714,32 @@ one.
 
 The opening banner keeps the sweep. At 19 rows it fits anywhere, so repainting in
 place is fine for it.
+
+## THE BANNER IS NOW WinGG, AND TWO BUGS THAT HID BEHIND ITS HEIGHT
+
+The opening banner was still the original W10&W11 / Debloat & / Optimize art. It had
+never been swapped for the new one, only the way it is printed had changed. It now
+reads WinGG over 10 and 11, with Debloat and Optimize as a plain subtitle.
+
+That one change surfaced two problems that the old art had been masking, because at
+33 rows it was taller than a 30-row console and therefore always fell back to a
+plain print - emitting no escape sequences at all. The new banner is 19 rows, so the
+sweep actually runs, and with it the escapes it writes.
+
+FIRST: the art appeared on the PowerShell blue background while everything around it
+was black. Each frame ended with a bare reset, which clears every attribute
+including the background and drops it to the console default - not to the black the
+script had set. Frames now assert the black background themselves and end by
+resetting only the foreground.
+
+SECOND: output after the banner lost its colour - the package-removal lines came out
+white instead of following the colour table. A VT foreground escape overrides the
+foreground that redundantColors sets through RawUI, so resetting to "default" at the
+end of an animation silently changed the colour of everything printed afterwards.
+Only lines passing -ForegroundColor explicitly were unaffected, which is why the
+status tags still looked right and the plain lines did not.
+
+Restore-ConsoleColour fixes it by re-asserting the host's CURRENT RawUI colours as
+VT escapes when an animation finishes, rather than resetting to a default that was
+never what the script was using. It reads the colours from the host rather than
+hardcoding them, so it stays correct if the scheme changes.
