@@ -1,7 +1,7 @@
 # WindowsGG - winGG10&11.ps1
 ## Feature Reference (generation 3)
 
-647,046 bytes | 18,672 lines | 59 functions | 46 steps  (see addenda below)
+647,307 bytes | 18,676 lines | 59 functions | 46 steps  (see addenda below)
 ~2,661 lines of code, ~15,363 lines of embedded data
 Target: a freshly reformatted Windows 10/11 gaming PC.
 
@@ -650,3 +650,20 @@ at a time asking for a 1 ms delay; Start-Sleep cannot go below the ~15.6 ms time
 tick, so it actually took 30.4 seconds. The reveal takes about two. The old code
 also called $Random.Next(1), which always returns 0 - so the intended randomness
 never happened either.
+
+## THE BLACK BACKGROUND, FINALLY
+
+The terminal painting PowerShell blue instead of black was a one-word regression.
+redundantColors was refactored so the full-screen repaint became an opt-in
+-ClearScreen switch, but the call that runs before anything prints was left bare.
+Setting BackgroundColor alone only colours cells written AFTERWARDS - the existing
+buffer keeps the console default. That is exactly why the banner appeared on black
+while everything around it stayed blue.
+
+That first call now passes -ClearScreen, so the whole buffer is filled with the new
+background before any output.
+
+The VT probe was also moved ahead of it. redundantColors emits VT escapes on its
+first path, and those only work once ENABLE_VIRTUAL_TERMINAL_PROCESSING is on - so
+enabling VT after the first colour call left that path doing nothing on a console
+that had not already opted in.

@@ -429,8 +429,32 @@ function Write-Color([String[]]$Text, [ConsoleColor[]]$ForeGroundColor, [Console
     Write-Host
 }
 
+#ADDED: VT probe. ENABLE_VIRTUAL_TERMINAL_PROCESSING lets a whole frame carry its
+#own colour inside one [Console]::Write. Without it, per-cell colour needs
+#Write-Host per character - about 120 ms a frame for the banner, which looks worse
+#than no animation at all, so Show-ArtReveal falls back to a plain print instead.
+#This matters under Windows PowerShell 5.1, which is what actually renders these.
+$script:VTOK = $false
+try {
+    if (-not ('Win32.VTNative' -as [type])) {
+        Add-Type -Name VTNative -Namespace Win32 -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr GetStdHandle(int n);
+[DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetConsoleMode(IntPtr h, out uint m);
+[DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetConsoleMode(IntPtr h, uint m);
+'@
+    }
+    $vtH = [Win32.VTNative]::GetStdHandle(-11)
+    [uint32]$vtM = 0
+    if ([Win32.VTNative]::GetConsoleMode($vtH, [ref]$vtM)) {
+        if ([Win32.VTNative]::SetConsoleMode($vtH, $vtM -bor 0x0004)) { $script:VTOK = $true }
+    }
+} catch { $script:VTOK = $false }
+
 #Set the terminal to the script's colours before anything prints.
-redundantColors
+#-ClearScreen matters: setting BackgroundColor alone only affects cells written
+#AFTERWARDS. Without a clear, the buffer keeps the console default - which is why
+#the banner came out on black while everything around it stayed PowerShell blue.
+redundantColors -ClearScreen
 
 function Write-Countdown {
     param (
@@ -507,26 +531,6 @@ Function Write-Gradient {
     Write-Host ''
 }
 
-#ADDED: VT probe. ENABLE_VIRTUAL_TERMINAL_PROCESSING lets a whole frame carry its
-#own colour inside one [Console]::Write. Without it, per-cell colour needs
-#Write-Host per character - about 120 ms a frame for the banner, which looks worse
-#than no animation at all, so Show-ArtReveal falls back to a plain print instead.
-#This matters under Windows PowerShell 5.1, which is what actually renders these.
-$script:VTOK = $false
-try {
-    if (-not ('Win32.VTNative' -as [type])) {
-        Add-Type -Name VTNative -Namespace Win32 -MemberDefinition @'
-[DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr GetStdHandle(int n);
-[DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetConsoleMode(IntPtr h, out uint m);
-[DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetConsoleMode(IntPtr h, uint m);
-'@
-    }
-    $vtH = [Win32.VTNative]::GetStdHandle(-11)
-    [uint32]$vtM = 0
-    if ([Win32.VTNative]::GetConsoleMode($vtH, [ref]$vtM)) {
-        if ([Win32.VTNative]::SetConsoleMode($vtH, $vtM -bor 0x0004)) { $script:VTOK = $true }
-    }
-} catch { $script:VTOK = $false }
 
 #ADDED: animated reveal for the two pieces of ASCII art.
 #  Sweep - a bright edge wipes across and leaves the art behind it. Used for the
