@@ -1,7 +1,7 @@
 # WindowsGG - winGG10&11.ps1
 ## Feature Reference (generation 3)
 
-640,465 bytes | 18,545 lines | 59 functions | 46 steps  (see addenda below)
+647,046 bytes | 18,672 lines | 59 functions | 46 steps  (see addenda below)
 ~2,661 lines of code, ~15,363 lines of embedded data
 Target: a freshly reformatted Windows 10/11 gaming PC.
 
@@ -626,3 +626,27 @@ The script and its three tools are now public repositories:
 Each tool repo holds the authoritative documentation for that tool. The copies
 embedded here are what get written to the Desktop, and they do not update
 themselves when a repo changes - they are separate copies needing their own commit.
+
+## THE ASCII ART NOW ANIMATES IN
+
+The opening banner was reworded to WinGG / 10 and 11 and now arrives with a sweep
+- a bright edge wipes across and leaves the banner behind it. The closing art
+condenses out of falling rain instead of being typed out.
+
+Both run through one function, `Show-ArtReveal`, which repaints only the art's own
+box, is frame-paced at about 20 fps, and finishes on the completed art with the
+cursor directly beneath it - so the rest of the run prints underneath exactly as
+before.
+
+It needs ENABLE_VIRTUAL_TERMINAL_PROCESSING, which the script now turns on itself
+via SetConsoleMode. That works under Windows PowerShell 5.1, which matters because
+5.1 is what actually renders these. Without VT, per-cell colour would need
+Write-Host per character - roughly 120 ms a frame - so the fallback is a plain
+print. It also falls back when output is redirected, or when the art is wider than
+the window and would wrap.
+
+The closing art was worth replacing on its own merits. It typed out one character
+at a time asking for a 1 ms delay; Start-Sleep cannot go below the ~15.6 ms timer
+tick, so it actually took 30.4 seconds. The reveal takes about two. The old code
+also called $Random.Next(1), which always returns 0 - so the intended randomness
+never happened either.

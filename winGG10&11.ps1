@@ -507,6 +507,141 @@ Function Write-Gradient {
     Write-Host ''
 }
 
+#ADDED: VT probe. ENABLE_VIRTUAL_TERMINAL_PROCESSING lets a whole frame carry its
+#own colour inside one [Console]::Write. Without it, per-cell colour needs
+#Write-Host per character - about 120 ms a frame for the banner, which looks worse
+#than no animation at all, so Show-ArtReveal falls back to a plain print instead.
+#This matters under Windows PowerShell 5.1, which is what actually renders these.
+$script:VTOK = $false
+try {
+    if (-not ('Win32.VTNative' -as [type])) {
+        Add-Type -Name VTNative -Namespace Win32 -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr GetStdHandle(int n);
+[DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetConsoleMode(IntPtr h, out uint m);
+[DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetConsoleMode(IntPtr h, uint m);
+'@
+    }
+    $vtH = [Win32.VTNative]::GetStdHandle(-11)
+    [uint32]$vtM = 0
+    if ([Win32.VTNative]::GetConsoleMode($vtH, [ref]$vtM)) {
+        if ([Win32.VTNative]::SetConsoleMode($vtH, $vtM -bor 0x0004)) { $script:VTOK = $true }
+    }
+} catch { $script:VTOK = $false }
+
+#ADDED: animated reveal for the two pieces of ASCII art.
+#  Sweep - a bright edge wipes across and leaves the art behind it. Used for the
+#          opening banner.
+#  Rain  - drops fall down the art's own columns and it locks in behind them.
+#          Used for the closing art.
+#Both repaint only the art's own box, are frame-paced, and finish ON the completed
+#art with the cursor directly beneath it, so whatever prints next just continues.
+#
+#This replaces a per-character Write-Host type-out that asked for a 1 ms delay per
+#character. Start-Sleep cannot go below the ~15.6 ms timer tick, so that type-out
+#actually took 30 seconds for the closing art. These run in about two.
+Function Show-ArtReveal {
+    param(
+        [string]$Art,
+        [ValidateSet('Sweep','Rain')][string]$Style = 'Sweep',
+        [ValidateSet('Banner','Leaf')][string]$Theme = 'Banner',
+        [int]$FrameMs = 45
+    )
+
+    $rows = $Art -split "`r?`n"
+    while ($rows.Count -gt 1 -and $rows[0].Trim() -eq '') { $rows = $rows[1..($rows.Count-1)] }
+    while ($rows.Count -gt 1 -and $rows[-1].Trim() -eq '') { $rows = $rows[0..($rows.Count-2)] }
+    $BW = 0; foreach ($r in $rows) { if ($r.Length -gt $BW) { $BW = $r.Length } }
+    $BH = $rows.Count
+
+    #fall back to a plain print when there is no console to animate on, when VT is
+    #unavailable, or when the art is wider than the window and would wrap.
+    $tooWide = $false
+    try { $tooWide = ($BW -ge $Host.UI.RawUI.WindowSize.Width) } catch { $tooWide = $true }
+    if (-not $script:CanAnimate -or -not $script:VTOK -or $tooWide) {
+        if ($Theme -eq 'Leaf') { Write-Host $Art -ForegroundColor DarkGreen }
+        else { Write-Gradient -Text $Art -Palette DarkCyan,Cyan,White,Cyan,DarkCyan,Blue -DelayMs 0 }
+        return
+    }
+
+    $esc = [char]27
+    if ($Theme -eq 'Leaf') {
+        $pal  = @(@(20,120,40), @(60,180,70), @(140,230,140), @(60,180,70), @(20,120,40), @(10,90,30))
+        $dim  = "$esc[38;2;10;80;30m"
+        $head = "$esc[38;2;200;255;200m"
+    } else {
+        $pal  = @(@(0,139,139), @(0,220,220), @(235,255,255), @(0,220,220), @(0,139,139), @(40,90,220))
+        $dim  = "$esc[38;2;0;110;110m"
+        $head = "$esc[38;2;235;255;255m"
+    }
+
+    $grid = New-Object 'char[]' ($BW * $BH)
+    for ($y = 0; $y -lt $BH; $y++) {
+        $line = $rows[$y].PadRight($BW)
+        for ($x = 0; $x -lt $BW; $x++) { $grid[$x + $BW*$y] = $line[$x] }
+    }
+
+    $top = [Console]::CursorTop
+    for ($i = 0; $i -lt $BH; $i++) { Write-Host '' }
+    try { [Console]::CursorVisible = $false } catch { }
+
+    $rnd   = New-Object System.Random
+    $noise = '8.*dPYb:;=-~'.ToCharArray()
+    $sb    = New-Object System.Text.StringBuilder
+
+    if ($Style -eq 'Rain') {
+        $drop = New-Object double[] $BW
+        $spd  = New-Object double[] $BW
+        for ($x = 0; $x -lt $BW; $x++) { $drop[$x] = -$rnd.Next(0, 14); $spd[$x] = 0.7 + $rnd.NextDouble() * 0.9 }
+        while ($true) {
+            $fsw = [System.Diagnostics.Stopwatch]::StartNew()
+            $done = $true
+            for ($x = 0; $x -lt $BW; $x++) { if ($drop[$x] -le $BH) { $done = $false }; $drop[$x] += $spd[$x] }
+            $null = $sb.Clear(); $lastCol = ''
+            for ($y = 0; $y -lt $BH; $y++) {
+                for ($x = 0; $x -lt $BW; $x++) {
+                    $hy = [int]$drop[$x]
+                    if ($y -eq $hy -and $hy -lt $BH) { $c = $head; $o = $noise[$rnd.Next($noise.Count)] }
+                    elseif ($y -gt $hy)              { $c = '';    $o = ' ' }
+                    elseif ($y -lt $hy)              { $p = $pal[($x + $y) % $pal.Count]; $c = "$esc[38;2;$($p[0]);$($p[1]);$($p[2])m"; $o = $grid[$x + $BW*$y] }
+                    else                             { $c = $dim;  $o = $noise[$rnd.Next($noise.Count)] }
+                    if ($c -ne '' -and $c -ne $lastCol) { $null = $sb.Append($c); $lastCol = $c }
+                    $null = $sb.Append($o)
+                }
+                if ($y -lt $BH-1) { $null = $sb.Append("`n") }
+            }
+            $null = $sb.Append("$esc[0m")
+            [Console]::SetCursorPosition(0, $top)
+            [Console]::Write($sb.ToString())
+            if ($done) { break }
+            $rem = $FrameMs - $fsw.Elapsed.TotalMilliseconds
+            if ($rem -gt 0) { Start-Sleep -Milliseconds ([int]$rem) }
+        }
+    } else {
+        for ($edge = 0; $edge -le $BW + 6; $edge += 2) {
+            $fsw = [System.Diagnostics.Stopwatch]::StartNew()
+            $null = $sb.Clear(); $lastCol = ''
+            for ($y = 0; $y -lt $BH; $y++) {
+                for ($x = 0; $x -lt $BW; $x++) {
+                    if ($x -lt $edge - 3)   { $p = $pal[($x + $y) % $pal.Count]; $c = "$esc[38;2;$($p[0]);$($p[1]);$($p[2])m"; $o = $grid[$x + $BW*$y] }
+                    elseif ($x -le $edge)   { $c = $head; $o = $grid[$x + $BW*$y]; if ($o -eq ' ') { $o = '|' } }
+                    else                    { $c = '';    $o = ' ' }
+                    if ($c -ne '' -and $c -ne $lastCol) { $null = $sb.Append($c); $lastCol = $c }
+                    $null = $sb.Append($o)
+                }
+                if ($y -lt $BH-1) { $null = $sb.Append("`n") }
+            }
+            $null = $sb.Append("$esc[0m")
+            [Console]::SetCursorPosition(0, $top)
+            [Console]::Write($sb.ToString())
+            $rem = $FrameMs - $fsw.Elapsed.TotalMilliseconds
+            if ($rem -gt 0) { Start-Sleep -Milliseconds ([int]$rem) }
+        }
+    }
+
+    [Console]::SetCursorPosition(0, $top + $BH)
+    try { [Console]::CursorVisible = $true } catch { }
+}
+
 #Cmdlets that emit progress records are supposed to send a final "completed" record when they
 #finish. Several of the Appx and DISM ones do not, so the host leaves the blue banner sitting
 #across the top of the console covering whatever prints afterwards. There is no "clear whatever
@@ -2809,7 +2944,7 @@ Y88b. .d88P 888 d88P Y88b.  888 888  888  888 888  d88P    Y8b.
             888                                                                      
             888                                                                       
 " 
-Write-Gradient -Text $bannerArt -Palette DarkCyan,Cyan,White,Cyan,DarkCyan,Blue -DelayMs 0
+Show-ArtReveal -Art $bannerArt -Style Sweep -Theme Banner -FrameMs 45
 Start-Sleep 1
 Write-Host " "
 Write-Host "." -ForegroundColor Yellow 
@@ -18474,11 +18609,7 @@ do {
               \_/***-*                           `-*--(_,`*`-`
                 Your PC will reboot in 4 seconds. . . 
 '
-        $Venasaur -split '' |
-        ForEach-Object{
-          Write-Host $_ -nonew -ForeGroundColor DarkGreen
-          Start-Sleep -milliseconds $(1 + $Random.Next(1))
-        }
+        Show-ArtReveal -Art $Venasaur -Style Rain -Theme Leaf -FrameMs 45
         Start-Sleep 4
         redundantColors -Background Black -Foreground White -ClearScreen
         CleanMemoryy
@@ -18527,11 +18658,7 @@ do {
  `*^--*..*   *-`-^-**--    `-^-*`.*******`.,^.`.--* 
                 Reboot is skipped. . . 
 '
-        $bisstarter -split '' |
-        ForEach-Object{
-          Write-Host $_ -nonew -ForeGroundColor DarkGreen
-          Start-Sleep -milliseconds $(1 + $Random.Next(1))
-        }
+        Show-ArtReveal -Art $bisstarter -Style Rain -Theme Leaf -FrameMs 45
         Write-Host "" 
         Start-Sleep 4
         redundantColors -Background Black -Foreground White -ClearScreen
