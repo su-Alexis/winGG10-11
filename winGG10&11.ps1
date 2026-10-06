@@ -465,6 +465,12 @@ $script:VTIndex = @{
 Function Restore-ConsoleColour {
     #Re-asserts the host's current colours as VT escapes, so animation state does not
     #leak into the rest of the run.
+    #A VT escape is only meaningful when VT is on. Both call sites sit after the
+    #plain-print early-returns, so this cannot currently be reached with VT off - but
+    #without this guard a future call site would print [38;5;7m as literal text into
+    #the output, which is exactly what happened when the test harness called it
+    #unconditionally. Guarding here rather than at each call site.
+    if (-not $script:VTOK) { return }
     try {
         $e = [char]27
         $f = "$($Host.UI.RawUI.ForegroundColor)"

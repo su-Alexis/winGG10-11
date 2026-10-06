@@ -845,15 +845,46 @@ CanAnimate false and every case must plain-print. That both proves the spy plumb
 exercises the no-console branch, so a failure on a real console means the chain is
 wrong and not the test.
 
-## ONE THING FOUND AND NOT CHANGED
+## THE VT GUARD ON Restore-ConsoleColour
 
-Restore-ConsoleColour writes VT escapes without checking $script:VTOK. With VT
-unavailable it emits [38;5;7m into the output as literal text.
+Restore-ConsoleColour wrote VT escapes without checking $script:VTOK. With VT
+unavailable that puts [38;5;7m into the output as literal text.
 
-This script is not affected. Both call sites sit after the plain-print early-returns in
-Show-ArtReveal and Show-ArtCascade, so the function is only ever reached when VT is on
-and an animation actually ran. It was the test harness calling it unconditionally that
-exposed this, and the harness now guards it the same way the script does.
+The script was never affected by it. Both call sites sit after the plain-print
+early-returns in Show-ArtReveal and Show-ArtCascade, so the function could only be
+reached when VT was on and an animation had actually run. It surfaced because the test
+harness called it unconditionally and the escapes appeared in the captured output.
 
-It is recorded here because it is a trap for any future call site, not a present bug. A
-single early return on -not $script:VTOK would close it permanently.
+It is guarded now anyway - a single early return on -not $script:VTOK - because the
+safety came from where the function happened to be called rather than from anything the
+function itself checked. Any future call site would have inherited the bug, and the
+failure is the kind that looks like a corrupted file rather than a logic error.
+
+The guard is asserted rather than assumed. Restore-ConsoleColour writes through
+[Console]::Write, so the test swaps Console.Out for a StringWriter and compares what
+comes back: empty with VT off, containing both a 38;5 foreground and a 48;5 background
+escape with VT on. That makes it a string comparison instead of something judged by
+eye, and it runs headlessly.
+
+## TWO MAINTENANCE TRAPS WORTH WRITING DOWN
+
+Both of these were hit while applying the change above, and both produce a file that
+looks fine and parses fine.
+
+FIRST, THE BOM. This script is UTF-8 WITH a byte order mark, and it has to stay that
+way. It carries 28 non-ASCII bytes - ten non-breaking spaces at C2 A0, an em dash, a
+few others. Windows PowerShell 5.1 uses the BOM to decide the encoding, and without it
+reads the file as Windows-1252, so every non-breaking space becomes two garbage
+characters. Any tool that reads the file as utf-8-sig and writes it back as plain utf-8
+silently strips the mark. Nothing complains, the script still parses, and the damage
+only shows up in the rendered art. Check the first three bytes are EF BB BF after any
+scripted edit.
+
+SECOND, BRACE MATCHING TO FIND THE END OF A BLOCK. The AMSIfix variant is regenerated
+from this file by swapping the CleanupMainBat here-string for the runtime loader.
+Locating the end of that loader by searching for the first line that is exactly a
+closing brace finds the one that closes the if, not the one that closes the else - so
+it silently truncated the else branch and lost the "cleanup_main.bat.txt is not next to
+this script" warning. The file still parsed, which is why a parse check did not catch
+it. Use explicit line boundaries, and verify by counting: the loader block is 26 lines,
+and the variant must differ from this file in exactly ONE hunk.
