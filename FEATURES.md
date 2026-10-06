@@ -832,13 +832,14 @@ multi-line argument is the signature of one, while per-character and blank-line 
 are ignored. Each case asserts the path actually taken, with timing kept only as a
 secondary check that frames genuinely ran.
 
-Eleven branches are asserted: both themes fitting, too tall, too wide (expecting the
+Ten branches are asserted: both themes fitting, too tall, too wide (expecting the
 two-hop cascade,plain), the height boundary in both -ClearFirst states, VT forced off
 in both themes, and CanAnimate forced off in both themes. The Banner theme degrades
 twice when there is no console, because Write-Gradient carries its own CanAnimate
 guard, so the expected trace there is gradient,plain.
 
-All eleven pass.
+All ten pass, plus the two assertions on the VT guard described in the next section -
+twelve in total.
 
 The harness itself was smoke-tested headlessly first, where output redirection forces
 CanAnimate false and every case must plain-print. That both proves the spy plumbing and
