@@ -63,6 +63,22 @@ have their own repository, with full documentation:
 Those repos hold the authoritative copies of each tool's documentation. The copies
 embedded in this script are what get written to the Desktop.
 
+## Tests
+
+`tests/adaptive-test.ps1` covers the ASCII-art reveal — the one part of this script
+whose behaviour depends on the machine it lands on, since it picks between an in-place
+animation, a line-by-line cascade and a plain print based on the console it finds at
+runtime.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .	estsdaptive-test.ps1
+```
+
+It needs a console window and makes no system changes. The animation functions are
+lifted verbatim out of the script rather than reimplemented, and the test re-parses the
+script to confirm those copies are still current, so it cannot quietly pass against a
+stale copy. See [tests/README.md](tests/README.md).
+
 ## Requirements
 
 Windows 10 or 11. Administrator rights — it elevates itself. Windows PowerShell
