@@ -29,7 +29,7 @@ A full transcript of every run lands in `C:\Temp\WindowsDebloat&Optimize`.
 
 ---
 
-## THE STEPS  (44 at time of writing; 53 now - see addenda)
+## THE STEPS  (44 at time of writing; 54 now - see addenda)
 
 ### Preparation
   1.  Building Desktop tools + God Mode
@@ -147,7 +147,8 @@ that is the failure mode that strands a machine.
   - Idempotent: verified across consecutive runs with zero registry, AppX,
     DNS or scheduled-task drift
   - No remote code execution, no downloads, no base64, no Defender tampering,
-    no ACL changes, no account changes, no disk or partition operations
+    no ACL changes, no disk or partition operations, and no account changes
+    unless you opt in at the last step (ADDENDUM 7)
   - Exactly one -Recurse delete in the whole script, guarded by Test-Path
   - A SYSTEM fallback for provisioned-package removal, using a transient
     scheduled task that unregisters itself in a finally block
@@ -898,7 +899,7 @@ and the variant must differ from this file in exactly ONE hunk.
 
 # ADDENDUM 7 - EXTRA TWEAKS MERGED IN (2026-10-22)
 
-697,954 bytes / 19,450 lines / 77 functions / 53 steps.
+703,091 bytes / 19,538 lines / 79 functions / 54 steps.
 NOT YET RUN as a whole - see "STILL TO VERIFY" at the end.
 
 ## WHAT THIS IS
@@ -907,7 +908,7 @@ The ExtraTweaks folder held a separate script, Apply-WinaeroTweaks.ps1, that
 reproduced a Winaero Tweaker export (44 tweaks) as native registry, service and task
 changes. It was reviewed and fixed on 2026-10-22. This script is meant to be the one
 thing you run after a reformat, so everything that script did that this one did not
-already do now lives here, as seven ordinary Invoke-Step steps at the end of the run:
+already do now lives here, as eight ordinary Invoke-Step steps at the end of the run:
 
   47. Blocking ads, tips and web suggestions    lock screen, Start, Settings ads;
                                                 soft landing; sync-provider banner;
@@ -927,6 +928,8 @@ already do now lives here, as seven ordinary Invoke-Step steps at the end of the
   51. Adding Windows Update to Control Panel
   52. Adding context menu tools                 16 entries - see below
   53. Restoring the classic context menu        Windows 10 right-click menu on Windows 11
+  54. Built-in Administrator account (optional) OPT-IN prompt, password required -
+                                                see below
 
 Context menu tools: Command Prompt and PowerShell as admin (desktop and folder
 background), Kill not responding, Task Manager, Clipboard History, sfc /scannow,
@@ -990,6 +993,22 @@ string. reg.exe is no answer for those: Windows PowerShell 5.1 drops "" when pas
 arguments to a native exe. A failed write prints and stays in $Error, so the step
 reports PARTIAL rather than OK.
 
+## THE BUILT-IN ADMINISTRATOR IS OPT-IN, AND NEEDS A PASSWORD
+
+Step 54, deliberately last so it is the one thing you answer before walking away.
+It asks for a new password for the RID-500 account ("leave blank and press Enter to
+skip"), asks for it again, and only then sets the password and enables the account -
+in that order, so a refused password never leaves it enabled with the blank one it
+ships with. Blank, no console, or three mismatched pairs = skipped, nothing changed.
+Already enabled = left exactly as it is. The password is read as a SecureString,
+never echoed or logged, and the two entries are compared in unmanaged memory that is
+zeroed straight afterwards. The step prints how to turn it off again
+(Disable-LocalUser -SID ...-500).
+
+Worth knowing before typing a password: that account runs everything fully elevated
+with no UAC prompt, and Store / UWP apps (Xbox, Game Pass) typically refuse to open
+under it. Your own account is already an administrator through UAC.
+
 ## LEFT OUT, ON PURPOSE
 
   Already done here       background apps, error reporting, Copilot, DiagTrack, the
@@ -1007,7 +1026,6 @@ reports PARTIAL rather than OK.
   Start "Recommended" policy
                           Enterprise/Education only. Inert on Home and Pro, which is
                           what a gaming PC runs.
-  Built-in Administrator  No account changes. It has no password by default.
   Nav pane "pinned" items Five of the seven export entries are already the Windows
                           default; only OneDrive and Libraries (hidden) are written.
   -Revert / JSON backup   This script has no parameters and relies on the restore

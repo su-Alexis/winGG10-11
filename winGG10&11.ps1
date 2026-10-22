@@ -123,6 +123,7 @@
 ##  AddControlPanelWU               Windows Update entry in Control Panel
 ##  AddContextMenuTools             right-click tools (admin consoles, hash, take ownership...)
 ##  SetClassicContextMenu           Windows 10 right-click menu on Windows 11
+##  EnableBuiltinAdmin              OPT-IN: enable built-in Administrator, password required
 ##
 ##
 ##  NETWORK:
@@ -3166,7 +3167,8 @@ Function Confirm-RealUserHive {
 #    - Windows Update set to notify-before-download: that delays security patches
 #    - MRT DontOfferThroughWUAU: this script does not switch off security tooling
 #    - Start-menu "Recommended" policy: Enterprise/Education only, inert on Home/Pro
-#    - enabling the built-in Administrator: no account changes
+#    The built-in Administrator is NOT enabled here either: that is EnableBuiltinAdmin, an opt-in
+#    prompt near the end of the run that refuses to proceed without a password.
 #===============================================================================================
 
 Function Set-RegValueNet {
@@ -3528,6 +3530,88 @@ Function AddControlPanelWU {
     Set-RegValueNet "$base\DefaultIcon" '' '%SystemRoot%\System32\wuaueng.dll,0' 'ExpandString'
     Set-RegValueNet "$base\Shell\Open\Command" '' '%SystemRoot%\System32\control.exe /name Microsoft.WindowsUpdate' 'ExpandString'
     Set-RegValueNet "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\$clsid" '' 'Windows Update' 'String'
+}
+
+Function Test-SecureStringEqual {
+    #Compares two SecureStrings without ever turning either into a managed string - those
+    #cannot be wiped and sit in memory until the garbage collector gets round to them. The
+    #unmanaged BSTR copies are compared in place and zeroed straight afterwards.
+    param([Parameter(Mandatory)][Security.SecureString]$A, [Parameter(Mandatory)][Security.SecureString]$B)
+    if ($A.Length -ne $B.Length) { return $false }
+    $pa = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($A)
+    $pb = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($B)
+    try {
+        for ($i = 0; $i -lt $A.Length; $i++) {
+            if ([Runtime.InteropServices.Marshal]::ReadInt16($pa, $i * 2) -ne [Runtime.InteropServices.Marshal]::ReadInt16($pb, $i * 2)) { return $false }
+        }
+        return $true
+    }
+    finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pa)
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pb)
+    }
+}
+
+Function EnableBuiltinAdmin {
+    #OPT-IN, and the only account change this script makes. The built-in Administrator (RID 500)
+    #is worth knowing about before saying yes:
+    #  - it ships with NO password, so enabling it bare hands full admin to anyone at the
+    #    keyboard - which is why this refuses to enable it without one;
+    #  - it runs with UAC filtering OFF by default, so everything it starts, malware included,
+    #    is fully elevated without a prompt;
+    #  - Store / UWP apps (the Xbox app and Game Pass among them) typically refuse to open
+    #    under it. Your own account is already an administrator through UAC.
+    #Blank answer, no console, or two mismatched entries three times = skipped, account left
+    #as it was. The password is read as a SecureString and never echoed or logged; the run
+    #transcript only records the prompt.
+    Write-Host "Built-in Administrator account (optional). . ." -ForegroundColor Yellow
+    $admin = Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $_.SID.Value -match '-500$' } | Select-Object -First 1
+    if (-not $admin) {
+        Write-Host "  Could not find the built-in Administrator account (RID 500) - skipped." -ForegroundColor DarkYellow
+        return
+    }
+    if ($admin.Enabled) {
+        Write-Host "  '$($admin.Name)' is already enabled - left exactly as it is." -ForegroundColor Green
+        return
+    }
+    Write-Host "  This enables '$($admin.Name)', the built-in Administrator. It runs EVERYTHING fully" -ForegroundColor DarkGray
+    Write-Host "  elevated with no UAC prompt, and Store apps (Xbox, Game Pass) may refuse to open" -ForegroundColor DarkGray
+    Write-Host "  under it. Your own account is already an admin. A password is required." -ForegroundColor DarkGray
+
+    $pw = $null
+    for ($try = 1; $try -le 3; $try++) {
+        #Invoke-Silently: Read-Host throws when there is no console, and that is an answer
+        #(skip), not a failure for Invoke-Step to count.
+        $first = Invoke-Silently { Read-Host -Prompt "  New password for '$($admin.Name)' (leave blank and press Enter to skip)" -AsSecureString }
+        if (-not $first -or $first.Length -eq 0) { break }
+        $second = Invoke-Silently { Read-Host -Prompt '  Type it again' -AsSecureString }
+        if ($second -and (Test-SecureStringEqual $first $second)) { $pw = $first; break }
+        Write-Host "  The two entries did not match." -ForegroundColor DarkYellow
+    }
+    if (-not $pw) {
+        Write-Host "  Skipped - '$($admin.Name)' stays disabled." -ForegroundColor Green
+        return
+    }
+
+    try {
+        #Password FIRST, enable second. If the password is refused (a local password policy,
+        #say), the account is never enabled with the blank one it ships with.
+        try { Set-LocalUser -SID $admin.SID -Password $pw -ErrorAction Stop }
+        catch {
+            Write-Host "  Password refused: $($_.Exception.Message) - '$($admin.Name)' stays disabled." -ForegroundColor DarkYellow
+            return
+        }
+        try {
+            Enable-LocalUser -SID $admin.SID -ErrorAction Stop
+            Write-Host "  '$($admin.Name)' enabled with the password you set." -ForegroundColor Green
+            Write-Host "  To turn it off again, from an admin terminal:  Disable-LocalUser -SID $($admin.SID.Value)" -ForegroundColor DarkGray
+        }
+        catch { Write-Host "  Password set, but the account could not be enabled: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+    }
+    finally {
+        $pw.Dispose()
+        if ($second) { $second.Dispose() }
+    }
 }
 
 Function AddContextMenuTools {
@@ -19279,6 +19363,10 @@ Invoke-Step "Restoring Windows Photo Viewer"          { RestorePhotoViewer } -Sp
 Invoke-Step "Adding Windows Update to Control Panel"  { AddControlPanelWU } -Spin
 Invoke-Step "Adding context menu tools"               { AddContextMenuTools } -Spin
 Invoke-Step "Restoring the classic context menu"      { SetClassicContextMenu } -Spin
+
+#ADDED: opt-in, interactive, and deliberately the LAST step - you answer it once and walk away,
+#and a blank answer (or no console) skips it. No -Spin: the spinner would fight the prompt.
+Invoke-Step "Built-in Administrator account (optional)" { EnableBuiltinAdmin }
 
 Write-Host "Unloading the HKCR drive..." -ForegroundColor Yellow
 Remove-PSDrive HKCR -ErrorAction SilentlyContinue
