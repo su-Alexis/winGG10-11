@@ -161,11 +161,16 @@ that is the failure mode that strands a machine.
      refused the script through AMSI as Trojan:BAT/CryptoDrainer.C!MTB, before
      anything ran. Two edits to the embedded cleanup .bat were made together:
      the nine browser-folder entries in :CleanDir's exact-match guard were
-     removed (they could never match - :CleanDir only receives the eight fixed
-     folders in :AllTargets), and the "browser running" note no longer
-     mentions profiles, bookmarks or passwords. Since then the inert scan test
+     removed, and the "browser running" note no longer mentions profiles,
+     bookmarks or passwords. Under signatures 1.461.140.0 the inert scan test
      passes while the pre-edit file is still refused by the same test, and a
-     full real run (2026-10-21 15:05) logged no detection. Which edit mattered,
+     full real run (2026-10-21 15:05, believed to be the edited file) logged no
+     detection. Removing the browser entries opened a gap: a %TEMP% set to
+     exactly one of those folders would have been cleaned. Closed the same day
+     by :CleanTemp - %TEMP% is now only cleaned when its last folder is named
+     Temp or Tmp (custom folders like D:\Scratch are skipped; a per-session
+     ...\Temp\2 is still covered by the %LOCALAPPDATA%\Temp target). Scans
+     clean under the same test. See AV-evidence-2026-10-21\README.md. Which edit mattered,
      which Defender component decided, and why it chose that label are NOT
      known. Evidence and test harness: AV-evidence-2026-10-21\. Re-run
      scan-harness.ps1 after big changes. AMSIfix\ is no longer needed.
@@ -899,7 +904,7 @@ and the variant must differ from this file in exactly ONE hunk.
 
 # ADDENDUM 7 - EXTRA TWEAKS MERGED IN (2026-10-22)
 
-703,091 bytes / 19,538 lines / 79 functions / 54 steps.
+704,788 bytes / 19,570 lines / 79 functions / 54 steps.
 NOT YET RUN as a whole - see "STILL TO VERIFY" at the end.
 
 ## WHAT THIS IS

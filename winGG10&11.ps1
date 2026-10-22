@@ -17602,7 +17602,7 @@ exit /b
 ::  Target list - called twice: once to scan, once to clean
 :: ============================================================
 :AllTargets
-call :CleanDir "%TEMP%"                                             "User temp"
+call :CleanTemp
 call :CleanDir "%LOCALAPPDATA%\Temp"                                "User temp (alt)"
 call :CleanDir "%SystemRoot%\Temp"                                  "System temp"
 call :CleanDir "%SystemRoot%\SoftwareDistribution\Download"         "Windows Update cache"
@@ -17623,6 +17623,23 @@ goto :eof
 :: ============================================================
 ::  Subroutines
 :: ============================================================
+
+:CleanTemp
+:: %TEMP% is the one target whose whole path is user-configurable, so it is only
+:: cleaned when its last folder is named Temp or Tmp. Anything else - a custom
+:: scratch folder, a per-session \Temp\2 - is left alone. %LOCALAPPDATA%\Temp
+:: is its own target and is cleaned either way.
+set "_T=%TEMP%"
+if "%_T:~-1%"=="\" set "_T=%_T:~0,-1%"
+set "_TL="
+for %%T in ("%_T%") do set "_TL=%%~nxT"
+if /i not "%_TL%"=="Temp" if /i not "%_TL%"=="Tmp" (
+    call :Log "  REFUSED (TEMP is not a Temp or Tmp folder): %TEMP%"
+    goto :eof
+)
+call :CleanDir "%TEMP%" "User temp"
+goto :eof
+
 
 :CleanDir
 :: %1 = folder, %2 = label for the table.
