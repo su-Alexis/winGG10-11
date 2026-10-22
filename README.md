@@ -37,6 +37,10 @@ Right-click → **Run with PowerShell**, or double-click it.
 - Self-elevating: relaunches itself through UAC if it is not already admin
 - Hands itself to **Windows PowerShell 5.1** if started from PowerShell 7, because
   the Appx cmdlets do not load in Core
+- Checks first that HKCU is really your registry, and stops to ask if it is not:
+  started from inside an MSIX app (the Claude desktop app, for one) every per-user
+  change would land in that app's private copy, and with another admin's UAC
+  password it would land in that admin's profile
 - Every step runs through one harness that prints `[ OK ]`, `[ PARTIAL ]` or
   `[ ERROR ]`, counts errors per step, times each one, and prints a run summary
 - Answer `nn` at the end to skip the reboot

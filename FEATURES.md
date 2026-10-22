@@ -29,7 +29,7 @@ A full transcript of every run lands in `C:\Temp\WindowsDebloat&Optimize`.
 
 ---
 
-## THE STEPS  (44 at time of writing; 46 now - see addenda)
+## THE STEPS  (44 at time of writing; 53 now - see addenda)
 
 ### Preparation
   1.  Building Desktop tools + God Mode
@@ -893,3 +893,170 @@ it silently truncated the else branch and lost the "cleanup_main.bat.txt is not 
 this script" warning. The file still parsed, which is why a parse check did not catch
 it. Use explicit line boundaries, and verify by counting: the loader block is 26 lines,
 and the variant must differ from this file in exactly ONE hunk.
+
+---
+
+# ADDENDUM 7 - EXTRA TWEAKS MERGED IN (2026-10-22)
+
+697,954 bytes / 19,450 lines / 77 functions / 53 steps.
+NOT YET RUN as a whole - see "STILL TO VERIFY" at the end.
+
+## WHAT THIS IS
+
+The ExtraTweaks folder held a separate script, Apply-WinaeroTweaks.ps1, that
+reproduced a Winaero Tweaker export (44 tweaks) as native registry, service and task
+changes. It was reviewed and fixed on 2026-10-22. This script is meant to be the one
+thing you run after a reformat, so everything that script did that this one did not
+already do now lives here, as seven ordinary Invoke-Step steps at the end of the run:
+
+  47. Blocking ads, tips and web suggestions    lock screen, Start, Settings ads;
+                                                soft landing; sync-provider banner;
+                                                "new app" alert; Spotlight icon;
+                                                DisableSearchBoxSuggestions
+  48. Disabling remaining telemetry tasks       appraiser (both names), ProgramDataUpdater,
+                                                Autochk Proxy; feedback prompts; MRT
+                                                infection reporting
+  49. Applying Explorer and system extras       OneDrive + Libraries out of the nav pane,
+                                                no Store lookup for unknown types, OneDrive
+                                                folder backup blocked, Ink off, power
+                                                throttling off, BSOD details, Insider page
+                                                hidden, restore-point throttle off, Edge /
+                                                Chrome desktop shortcuts, logon blur off,
+                                                JPEG wallpaper quality 100
+  50. Restoring Windows Photo Viewer            per-user, Open with + Default apps
+  51. Adding Windows Update to Control Panel
+  52. Adding context menu tools                 16 entries - see below
+  53. Restoring the classic context menu        Windows 10 right-click menu on Windows 11
+
+Context menu tools: Command Prompt and PowerShell as admin (desktop and folder
+background), Kill not responding, Task Manager, Clipboard History, sfc /scannow,
+DISM /RestoreHealth, Advanced Startup (Shift+right-click only - it is an immediate
+forced reboot), a Control Panel cascade, Take Ownership, Unblock, View owner, a Hash
+cascade (MD5 to SHA512), Extract MSI, Run as administrator for .msi / .vbs / .ps1,
+and Modify / Run with PowerShell 5 / PowerShell 7 (admin and not) for .ps1. Plus
+Encrypt / Decrypt.
+
+## THE CLASSIC MENU WORKS - AND WHY IT LOOKED LIKE IT DID NOT
+
+The shim is an empty InprocServer32 under HKCU CLSID
+{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}. For weeks it appeared to do nothing on 26200,
+and the review first concluded that 24H2+ ignores it. That was wrong. Every test had
+been run from inside the Claude desktop app, which is an MSIX package: its child
+processes - elevated ones included - see HKCU merged with the app's private hive and
+write into that hive. Explorer never saw the value. Written to the real HKCU and
+followed by an Explorer restart, the classic menu appears with every added entry.
+Verified on 26200.9445.
+
+To undo it, from a normal terminal (no admin needed):
+
+    reg.exe delete "HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" /f
+
+then restart Explorer or sign out. The step prints the same command.
+
+## NEW: REAL-HIVE CHECK (runs first, before the banner)
+
+That MSIX finding applies to every HKCU tweak in this script, not just the menu, so it
+is now checked once at the start. Confirm-RealUserHive stops and asks before anything
+changes when:
+
+  - HKCU is virtualized. Detected by comparing the HKCU subkey names this process sees
+    with what a powershell.exe started fresh through WMI sees - same user, same hive,
+    so they only differ when one side is looking at an overlay. Package identity
+    cannot be used: GetCurrentPackageFullName reports "no package" from inside that
+    shell. The probe is passed as plain text, not -EncodedCommand, and writes its
+    answer to the log folder (C:\Temp is outside anything an MSIX app redirects).
+  - The elevated account is not the desktop user (over-the-shoulder UAC with another
+    admin's password). HKCU would then be that admin's hive.
+
+Type yes to carry on anyway. Anything else, or no console at all, stops with nothing
+changed. If the WMI probe itself fails, it says so and carries on.
+
+## SECURITY: THE CONTEXT MENU INJECTION FIX CAME WITH IT
+
+The original ExtraTweaks verbs pasted %1 / %V inside '...' in PowerShell code, so a file
+named  x';sc INJ.txt pwned;'.txt  ran code when you clicked Unblock - proven on the VM.
+For the elevated verbs it ran before the UAC prompt. New-PathSafeCmd passes the path as
+a separate quoted argument after a '#' and reads it back with
+[Environment]::GetCommandLineArgs()[-1], so the name never reaches the parser. Tested
+on the VM with ' & ! %OS% C:\ and a trailing backslash. The generated command strings
+are byte-identical to the reviewed script's.
+
+## WHY A SECOND REGISTRY WRITER
+
+Set-RegValue goes through the PowerShell provider. Set-RegValueNet uses the .NET API,
+because the provider cannot create a key literally named '*' (HKLM\SOFTWARE\Classes\*\
+shell - it is a wildcard there), and because several values are deliberately an EMPTY
+string. reg.exe is no answer for those: Windows PowerShell 5.1 drops "" when passing
+arguments to a native exe. A failed write prints and stays in $Error, so the step
+reports PARTIAL rather than OK.
+
+## LEFT OUT, ON PURPOSE
+
+  Already done here       background apps, error reporting, Copilot, DiagTrack, the
+                          CEIP/Siuf tasks, consumer features, the CDM app-install
+                          switches, BingSearchEnabled, DisableWebSearch
+  dmwappushservice off    CheckDMWService turns it back ON because Windows needs it.
+                          Adding both would have them fight on every run.
+  Windows Update -> notify before download
+                          Delays security patches on a machine that will not be
+                          watched. This script has never touched Windows Update.
+  MRT DontOfferThroughWUAU
+                          Stops the Malicious Software Removal Tool being delivered.
+                          This script does not switch off security tooling - the same
+                          reason SmartScreen is left alone. Infection REPORTING is off.
+  Start "Recommended" policy
+                          Enterprise/Education only. Inert on Home and Pro, which is
+                          what a gaming PC runs.
+  Built-in Administrator  No account changes. It has no password by default.
+  Nav pane "pinned" items Five of the seven export entries are already the Windows
+                          default; only OneDrive and Libraries (hidden) are written.
+  -Revert / JSON backup   This script has no parameters and relies on the restore
+                          point taken in step 2, like every other step. See KNOWN
+                          LIMITS 3.
+
+One addition the export did not have: NoNewAppAlert is also written to the HKLM policy
+key, which is where the documented Group Policy setting lives. The HKCU copy the
+reviewed script used and validated is kept.
+
+One existing gap closed in passing: Protect-Privacy writes AllowTelemetry under
+Policies\...\DataCollection only if that key already exists, which it often does not
+on a clean install. DisableTelemetryTasks writes it unconditionally.
+
+## INTERACTIONS WORTH KNOWING
+
+  - SystemRestorePointCreationFrequency is now left at 0. GenSysRestorePoint lifts the
+    throttle for its own checkpoint and restores what it found, which is now 0, so
+    the two agree. Installers can now create restore points every time.
+  - Power throttling off costs battery on a laptop. This script targets desktops.
+  - The Clipboard History menu can turn local Win+V history off. The script itself
+    leaves it on and only disables cross-device sync.
+
+## HOW IT WAS CHECKED
+
+  - Parse-clean, and every command name in the new block resolves to a cmdlet or a
+    function defined in this file. Parse-clean is not proof (ADDENDUM 3), so:
+  - Equivalence against the reviewed script. Apply-WinaeroTweaks.ps1 was loaded with
+    -DefinitionsOnly and every tweak run in its collect mode, which records each
+    path / name / type / value it would write. The new functions here were run with
+    Set-RegValueNet replaced by a recorder. 276 of the 277 writes match a record
+    exactly, including every context-menu command string; the 277th is the HKLM
+    NoNewAppAlert addition. Each of the 32 records the reviewed script has and this
+    one does not is covered by the LEFT OUT list above.
+  - The WMI probe's command line was rebuilt and its -Command text parsed: no errors,
+    and no double quote or newline anywhere in it.
+
+## STILL TO VERIFY
+
+  1. A full real run on the VM from a normal (non-Claude) admin terminal. Nothing in
+     this addendum has executed on Windows as part of this file yet.
+  2. scan-harness.ps1 against the new file (AV-evidence-2026-10-21). This adds
+     takeown / icacls, -Verb RunAs, -ExecutionPolicy Bypass and a WMI-started
+     powershell.exe to a file Defender has refused before. The 2026-10-21 fix is
+     "by observation, cause not proven", so it could come back.
+  3. The real-hive check from inside the Claude app: it should stop and ask.
+  4. Validate-Tweaks.ps1 from ExtraTweaks can check a machine this script has run on,
+     since the values are the same. Expected, because of LEFT OUT: pageWindowsUpdate
+     and pageStartRecommended MISSING; pageDisableMRT, pageNavPaneDefaultItems and
+     pageDisableTelemetry (dmwappushservice) INCOMPLETE; pageEnableAdministrator
+     SKIPPED; pageDisableCopilot UNSUPPORTED. Anything else short of EFFECTIVE,
+     PARTIAL, MANUAL or UNVERIFIABLE is a real problem.
