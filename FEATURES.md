@@ -156,14 +156,18 @@ that is the failure mode that strands a machine.
 
 ## KNOWN LIMITS - READ BEFORE A LIVE MACHINE
 
-  1. AMSI FALSE POSITIVE, WORKED AROUND. Windows Defender flags the script as
-     Trojan:BAT/CryptoDrainer.C!MTB when the hosts blocklist and the embedded
-     cleanup .bat share one file. Either half alone is clean. With real-time
-     protection ON - the default after a reformat - the script is refused at
-     parse time and does not run. The companion-file variant in AMSIfix\ now does
-     exactly that, so by the leave-one-out result above it should scan clean -
-     but that has not been re-verified against a live Defender install. The
-     single-file form is affected either way.
+  1. RESOLVED 2026-10-21 (by observation - cause not proven) - was: Defender
+     refused the script through AMSI as Trojan:BAT/CryptoDrainer.C!MTB, before
+     anything ran. Two edits to the embedded cleanup .bat were made together:
+     the nine browser-folder entries in :CleanDir's exact-match guard were
+     removed (they could never match - :CleanDir only receives the eight fixed
+     folders in :AllTargets), and the "browser running" note no longer
+     mentions profiles, bookmarks or passwords. Since then the inert scan test
+     passes while the pre-edit file is still refused by the same test, and a
+     full real run (2026-10-21 15:05) logged no detection. Which edit mattered,
+     which Defender component decided, and why it chose that label are NOT
+     known. Evidence and test harness: AV-evidence-2026-10-21\. Re-run
+     scan-harness.ps1 after big changes. AMSIfix\ is no longer needed.
 
   2. NEVER TESTED ON REAL HARDWARE. Validated across 13 runs on a VMware guest
      only. The bcdedit boot-timer settings in particular are unverified against

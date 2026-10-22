@@ -16911,7 +16911,8 @@ goto :eof
 :CleanDir
 :: %1 = folder, %2 = label for the table.
 :: Deletes the CONTENTS of a folder (files and subfolders), not the folder.
-:: Refuses empty paths, drive roots, critical dirs and browser profiles.
+:: Refuses empty paths, drive roots and critical dirs.
+:: Only the fixed cache folders in :AllTargets are ever passed in.
 if "%~1"=="" goto :eof
 set "_CD=%~f1"
 set "_LBL=%~2"
@@ -16919,7 +16920,7 @@ if "%_CD:~3%"=="" (
     call :Log "  REFUSED (drive root): %_CD%"
     goto :eof
 )
-for %%X in ("%SystemRoot%" "%SystemRoot%\System32" "%SystemDrive%\Users" "%ProgramFiles%" "%PF86%" "%ProgramData%" "%USERPROFILE%" "%LOCALAPPDATA%" "%APPDATA%" "%LOCALAPPDATA%\Google" "%LOCALAPPDATA%\Google\Chrome" "%LOCALAPPDATA%\Google\Chrome\User Data" "%LOCALAPPDATA%\Microsoft\Edge" "%LOCALAPPDATA%\Microsoft\Edge\User Data" "%LOCALAPPDATA%\BraveSoftware" "%LOCALAPPDATA%\Vivaldi" "%APPDATA%\Mozilla" "%APPDATA%\Opera Software") do (
+for %%X in ("%SystemRoot%" "%SystemRoot%\System32" "%SystemDrive%\Users" "%ProgramFiles%" "%PF86%" "%ProgramData%" "%USERPROFILE%" "%LOCALAPPDATA%" "%APPDATA%") do (
     if /i "%_CD%"=="%%~fX" (
         call :Log "  REFUSED (protected): %_CD%"
         goto :eof
@@ -17057,8 +17058,7 @@ goto :eof
 set "BROWSING="
 for /f "usebackq delims=" %%B in (`powershell -NoProfile -Command "$n=@(Get-Process chrome,msedge,firefox,brave,opera,vivaldi -EA SilentlyContinue); if ($n.Count) { $g=@(); foreach ($p in $n) { if ($g -notcontains $p.ProcessName) { $g+=$p.ProcessName } }; $g -join ', ' }"`) do set "BROWSING=%%B"
 if not defined BROWSING goto :eof
-echo     NOTE: browser running (%BROWSING%). Profiles, bookmarks and
-echo     passwords are never touched, but your temp folder holds
+echo     NOTE: browser running (%BROWSING%). Your temp folder holds
 echo     in-progress downloads. Close it first if one is running.
 echo.
 goto :eof
