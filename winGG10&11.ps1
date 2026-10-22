@@ -3166,7 +3166,8 @@ Function Confirm-RealUserHive {
 #    - dmwappushservice disabled: CheckDMWService deliberately turns it back on
 #    - Windows Update set to notify-before-download: that delays security patches
 #    - MRT DontOfferThroughWUAU: this script does not switch off security tooling
-#    - Start-menu "Recommended" policy: Enterprise/Education only, inert on Home/Pro
+#    - Start-menu "Recommended" policy on Home/Pro: it is only honoured on Enterprise,
+#      Education and SE, so ApplySystemExtras writes it on those editions alone
 #    The built-in Administrator is NOT enabled here either: that is EnableBuiltinAdmin, an opt-in
 #    prompt near the end of the run that refuses to proceed without a password.
 #===============================================================================================
@@ -3441,6 +3442,20 @@ Function ApplySystemExtras {
     Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate' 'RemoveDesktopShortcutDefault' 1
     Set-RegValueNet 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer' 'DisableEdgeDesktopShortcutCreation' 1
     Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Google\Update' 'CreateDesktopShortcutDefault' 0
+
+    #Hide the Start menu "Recommended" section. HideRecommendedSection is documented for
+    #Enterprise, Education and SE only - Home and Pro ignore it - so it is written on those
+    #editions alone rather than left as a dead value everywhere else. EditionID covers the N
+    #and LTSC variants (EnterpriseN, EnterpriseS...); SE reports CloudEdition. Sign out to apply.
+    $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name EditionID).EditionID
+    if ($edition -match '^(Enterprise|Education|CloudEdition)') {
+        Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer' 'HideRecommendedSection' 1
+        Set-RegValueNet 'HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\Start' 'HideRecommendedSection' 1
+        Write-Host "  $edition edition - Start ""Recommended"" section hidden (sign out to apply)." -ForegroundColor Green
+    }
+    else {
+        Write-Host "  $edition edition ignores the Start ""Recommended"" policy - not written." -ForegroundColor DarkGray
+    }
 
     #Sign-in screen without the acrylic blur.
     Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' 'DisableAcrylicBackgroundOnLogon' 1

@@ -923,7 +923,9 @@ already do now lives here, as eight ordinary Invoke-Step steps at the end of the
                                                 throttling off, BSOD details, Insider page
                                                 hidden, restore-point throttle off, Edge /
                                                 Chrome desktop shortcuts, logon blur off,
-                                                JPEG wallpaper quality 100
+                                                JPEG wallpaper quality 100, Start
+                                                "Recommended" hidden (Enterprise /
+                                                Education / SE only)
   50. Restoring Windows Photo Viewer            per-user, Open with + Default apps
   51. Adding Windows Update to Control Panel
   52. Adding context menu tools                 16 entries - see below
@@ -1023,9 +1025,11 @@ under it. Your own account is already an administrator through UAC.
                           Stops the Malicious Software Removal Tool being delivered.
                           This script does not switch off security tooling - the same
                           reason SmartScreen is left alone. Infection REPORTING is off.
-  Start "Recommended" policy
-                          Enterprise/Education only. Inert on Home and Pro, which is
-                          what a gaming PC runs.
+  Start "Recommended" policy ON HOME / PRO
+                          HideRecommendedSection is documented for Enterprise,
+                          Education and SE only, so ApplySystemExtras checks EditionID
+                          and writes it on those editions alone (sign out to apply).
+                          Home and Pro print that it was skipped.
   Nav pane "pinned" items Five of the seven export entries are already the Windows
                           default; only OneDrive and Libraries (hidden) are written.
   -Revert / JSON backup   This script has no parameters and relies on the restore
@@ -1074,7 +1078,7 @@ on a clean install. DisableTelemetryTasks writes it unconditionally.
   3. The real-hive check from inside the Claude app: it should stop and ask.
   4. Validate-Tweaks.ps1 from ExtraTweaks can check a machine this script has run on,
      since the values are the same. Expected, because of LEFT OUT: pageWindowsUpdate
-     and pageStartRecommended MISSING; pageDisableMRT, pageNavPaneDefaultItems and
+     MISSING, and pageStartRecommended MISSING on Home/Pro (INERT there anyway); pageDisableMRT, pageNavPaneDefaultItems and
      pageDisableTelemetry (dmwappushservice) INCOMPLETE; pageEnableAdministrator
      SKIPPED; pageDisableCopilot UNSUPPORTED. Anything else short of EFFECTIVE,
      PARTIAL, MANUAL or UNVERIFIABLE is a real problem.
