@@ -904,7 +904,7 @@ and the variant must differ from this file in exactly ONE hunk.
 
 # ADDENDUM 7 - EXTRA TWEAKS MERGED IN (2026-10-22)
 
-704,788 bytes / 19,570 lines / 79 functions / 54 steps.
+704,895 bytes / 19,573 lines / 79 functions / 54 steps.
 NOT YET RUN as a whole - see "STILL TO VERIFY" at the end.
 
 ## WHAT THIS IS
@@ -1072,16 +1072,40 @@ on a clean install. DisableTelemetryTasks writes it unconditionally.
   - The WMI probe's command line was rebuilt and its -Command text parsed: no errors,
     and no double quote or newline anywhere in it.
 
+## VERIFIED ON THE VM (2026-10-22, normal admin terminal, 26200 Pro)
+
+  - scan-harness.ps1 against this file before the blocklist refresh below: ran, no
+    refusal. Pass ABSOLUTE paths to it - it uses [IO.File], which resolves relative
+    paths against the process directory, not the one you cd'd into.
+  - Full real run: 53 OK / 1 partial / 0 failed. Steps 47-54 all OK. Step 49 logged
+    the Start policy as "not written" on Pro, and a blank Enter at step 54 skipped.
+    The one PARTIAL is "Removing blacklisted packages" (UndockedDevKit is a
+    SystemApps package; AugLoop.CBS was in use) - identical in the 10-21 baseline.
+  - After a reboot the classic menu showed the new entries (Hash cascade, Take
+    Ownership, Unblock, View owner, Encrypt).
+
+## BLOCKLIST REFRESHED (2026-10-22)
+
+Replaced with the current someonewhocares.org/hosts/zero revision, stamped
+"Thu, 15 Oct 2026 at 17:57:51 GMT" (was 18 Sep 2026). Upstream changed four lines:
+the stamp, plus three new domains and none removed. 13,087 upstream domains, plus
+the 21 in #<other> = 13,108 unique, and the run prints 13,114 entries once the
+localhost and wpad lines are counted. Same method as ADDENDUM 5, done by script:
+  - #<other> is put back unchanged, straight after #</localhost>. Still zero
+    overlap with upstream.
+  - Every upstream entry points at 0.0.0.0, apart from the standard localhost /
+    broadcast / IPv6 lines. No line starts with '@, which would end the here-string.
+  - The upstream file is plain ASCII, so the non-ASCII count is still 31.
+The header's LAST EDITED and Version lines were updated with it (Version 25H2,
+which is what 26200 is).
+
 ## STILL TO VERIFY
 
-  1. A full real run on the VM from a normal (non-Claude) admin terminal. Nothing in
-     this addendum has executed on Windows as part of this file yet.
-  2. scan-harness.ps1 against the new file (AV-evidence-2026-10-21). This adds
-     takeown / icacls, -Verb RunAs, -ExecutionPolicy Bypass and a WMI-started
-     powershell.exe to a file Defender has refused before. The 2026-10-21 fix is
-     "by observation, cause not proven", so it could come back.
-  3. The real-hive check from inside the Claude app: it should stop and ask.
-  4. Validate-Tweaks.ps1 from ExtraTweaks can check a machine this script has run on,
+  1. scan-harness.ps1 again, against the refreshed file. The 10-21 refusal involved
+     the blocklist and the embedded cleanup .bat together, so a blocklist change
+     is exactly the kind of edit that needs a re-scan.
+  2. The real-hive check from inside the Claude app: it should stop and ask.
+  3. Validate-Tweaks.ps1 from ExtraTweaks can check a machine this script has run on,
      since the values are the same. Expected, because of LEFT OUT: pageWindowsUpdate
      MISSING, and pageStartRecommended MISSING on Home/Pro (INERT there anyway); pageDisableMRT, pageNavPaneDefaultItems and
      pageDisableTelemetry (dmwappushservice) INCOMPLETE; pageEnableAdministrator

@@ -50,8 +50,8 @@
 ###################################################################
 ###################################################################
 ##                                                               ##
-##           LAST EDITED : 09 - 13 - 2026 01:08:15 A.M.          ##
-##                          Version 24H2                         ##
+##           LAST EDITED : 10 - 22 - 2026 06:30:46 P.M.          ##
+##                          Version 25H2                         ##
 ##                                                               ##
 ###################################################################
 ###################################################################
@@ -3917,7 +3917,7 @@ $script:MNNSSMBlocklist = @'
 # Please forward any additions, corrections or comments by email to
 # hosts@someonewhocares.org
 
-# Last updated: Fri, 18 Sep 2026 at 19:29:33 GMT
+# Last updated: Thu, 15 Oct 2026 at 17:57:51 GMT
 
 # Use this file to prevent your computer from connecting to selected
 # internet hosts. This is an easy and effective way to protect you from 
@@ -5488,6 +5488,7 @@ ff02::3		ip6-allhosts
 0.0.0.0 askbot.com
 0.0.0.0 askto.net
 0.0.0.0 askubal.fr
+0.0.0.0 assistance.app-claude-ai.online
 0.0.0.0 assistcom.fr
 0.0.0.0 assodigitale.fr
 0.0.0.0 ast-grouope.fr
@@ -6823,6 +6824,7 @@ ff02::3		ip6-allhosts
 0.0.0.0 refund-int3rac.com
 0.0.0.0 regclassboard.com
 0.0.0.0 reliezvous.fr
+0.0.0.0 reminderannual2reward.com
 0.0.0.0 renacious.nwwadq.cn
 0.0.0.0 renov-landes.fr
 0.0.0.0 rentacars.fr
@@ -12215,6 +12217,7 @@ ff02::3		ip6-allhosts
 0.0.0.0 edchargina.pro
 0.0.0.0 eddy.noneto.com
 0.0.0.0 edge.bnmla.com
+0.0.0.0 edge.cuddlybeside.com
 0.0.0.0 edge.quantserve.com
 0.0.0.0 edgecast-vod.yimg.com
 0.0.0.0 edirect.hotkeys.com
