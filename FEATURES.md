@@ -960,7 +960,8 @@ and the variant must differ from this file in exactly ONE hunk.
 # ADDENDUM 7 - EXTRA TWEAKS MERGED IN (2026-10-22)
 
 708,247 bytes / 19,617 lines / 79 functions / 54 steps.
-NOT YET RUN as a whole - see "STILL TO VERIFY" at the end.
+Run on the VM 2026-10-22 - see "VERIFIED ON THE VM" below. Two smaller checks are
+still open, under "STILL TO VERIFY" at the end.
 
 ## WHAT THIS IS
 
@@ -1179,7 +1180,7 @@ B1000579... was recomputed off-box and matches, so that exact file was scanned.
 
 # ADDENDUM 8 - SECURITY HARDENING PASS (2026-10-23)
 
-753,682 bytes / 20,264 lines / 92 functions / 58 steps (31d703d).
+753,734 bytes / 20,264 lines / 92 functions / 58 steps.
 Run on the VM 2026-10-23 - see "VERIFIED ON THE VM" at the end.
 
 Comes from the read-only security review of main c9c0811 (the Claude Doc "winGG10&11
