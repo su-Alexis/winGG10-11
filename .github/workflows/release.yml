@@ -1,12 +1,23 @@
 name: Release
 
-# Push a tag such as v2026.10.23 to publish the script with its SHA256.
+# Two ways to publish a release, same result:
+#   - on GitHub: Releases > Draft a new release > new tag such as v2026.10.23 on main > Publish
+#   - or push a tag such as v2026.10.23
+# Either way this attaches the script and its SHA256 to that release.
 on:
+  release:
+    types: [published]
   push:
     tags: ['v*']
 
 permissions:
   contents: write
+
+# A release made on the website creates its tag as well, so both triggers can fire for one
+# release. They run one at a time, and the second only replaces the files with identical ones.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -15,15 +26,30 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       # .gitattributes checks *.ps1 out with CRLF on every OS, so this is the same file a
-      # Windows clone gets. The release asset is the file the hash is for.
-      - name: Publish the script and its SHA256
+      # Windows clone gets.
+      # GitHub turns '&' in a download's file name into '.', so the script is attached as
+      # winGG10-11.ps1, the repository's name. Same bytes, same hash: the script does not
+      # depend on its own file name.
+      - name: Attach the script and its SHA256
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          file='winGG10&11.ps1'
-          hash=$(sha256sum -- "$file" | cut -d' ' -f1)
-          printf '%s  %s\n' "$hash" "$file" > SHA256SUMS.txt
-          printf 'SHA256 of %s:\n\n    %s\n\nCheck it with:\n\n    Get-FileHash -Algorithm SHA256 %s\n' \
-              "$file" "$hash" "'.\\$file'" > notes.md
-          gh release create "$TAG" "$file" SHA256SUMS.txt --title "$TAG" --notes-file notes.md
+          asset='winGG10-11.ps1'
+          cp -- 'winGG10&11.ps1' "$asset"
+          hash=$(sha256sum -- "$asset" | cut -d' ' -f1)
+          printf '%s  %s\n' "$hash" "$asset" > SHA256SUMS.txt
+          printf 'SHA256 of %s:\n\n    %s\n\nCheck it with:\n\n    Get-FileHash -Algorithm SHA256 %s\n\nIt is winGG10&11.ps1 from the repository under a name GitHub allows. Renaming it back does not change the hash.\n' \
+              "$asset" "$hash" "'.\\$asset'" > notes.md
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # Made on the website: keep its notes, add the hash once.
+            gh release upload "$TAG" "$asset" SHA256SUMS.txt --clobber
+            body=$(gh release view "$TAG" --json body -q .body)
+            case "$body" in
+              *"$hash"*) ;;
+              *) printf '%s\n\n%s\n' "$body" "$(cat notes.md)" > body.md
+                 gh release edit "$TAG" --notes-file body.md ;;
+            esac
+          else
+            gh release create "$TAG" "$asset" SHA256SUMS.txt --title "$TAG" --notes-file notes.md
+          fi
