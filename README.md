@@ -23,7 +23,8 @@ note). An inert scan of the current file passes while the old file is still refu
 and a full real run logged no detection. Which edit mattered, and why Defender chose
 that label, is **not known** - so a future edit could bring it back. It was checked
 again on 2026-10-22 against the file with the ExtraTweaks merge and the refreshed
-blocklist, and still scanned clean. If the script is ever refused at parse time with
+blocklist, and still scanned clean, and again on 2026-10-23 for the security-hardening
+update, which changed both embedded `.bat` files. If the script is ever refused at parse time with
 real-time protection on, that is what happened. See FEATURES.md, KNOWN LIMITS 1.
 
 Beyond that: this script makes **substantial, persistent changes** to a Windows
@@ -73,7 +74,7 @@ Right-click → **Run with PowerShell**, or double-click it.
 | Location | Contents |
 |---|---|
 | Desktop | `cleanup_main.bat`, `net-reset-reboot.bat`, `net-reset-lite.bat`, a God Mode folder, and `netreset-logs\` from the network reset |
-| `C:\Temp\WindowsDebloat&Optimize` | Run transcripts, hosts backups (`hosts.original` is your pre-script file, kept for good), unrecognised-package reports. Administrators can change it; everyone else can only read it |
+| `C:\Temp\WindowsDebloat&Optimize` | Run transcripts, hosts backups (`hosts.original` is your pre-script file, kept for good), unrecognised-package reports. Administrators can change it; everyone else can only read it. If someone without admin rights created the folder first, it is renamed `WindowsDebloat&Optimize.untrusted-<date>` and left for you to look at, and a clean one is made |
 | `C:\Windows\System32\drivers\etc` | `hosts.winGG.previous`, the hosts file as it was just before this run |
 | Right-click menu | The classic menu on Windows 11, plus tools: admin consoles, Hash, Take Ownership, Unblock, View owner, Encrypt and more. Unblock and the two non-admin "Run with PowerShell" entries need Shift+right-click. To get the Windows 11 menu back: `reg.exe delete "HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" /f`, then restart Explorer |
 | Elsewhere | Windows Photo Viewer back under Open with, and Windows Update in Control Panel |
@@ -93,16 +94,20 @@ embedded in this script are what get written to the Desktop.
 
 ## Verify your download
 
-Each [release](https://github.com/su-Alexis/winGG10-11/releases) lists the SHA256 of the
-`winGG10&11.ps1` attached to it. Download that file, then:
+Releases are published from `v*` tags, and each
+[release](https://github.com/su-Alexis/winGG10-11/releases) lists the SHA256 of the
+`winGG10&11.ps1` attached to it. Every commit on `main` also has its SHA256 in the
+summary of its CI run, on the [Actions](https://github.com/su-Alexis/winGG10-11/actions)
+page. Download the file, then:
 
 ```powershell
 Get-FileHash -Algorithm SHA256 '.\winGG10&11.ps1'
 ```
 
-The hash must match exactly. Compare against the release asset only: the repository
-stores the script with LF line endings and checks it out with CRLF, so a "Raw" download
-and a clone give different bytes, and so different hashes, for the same script.
+The hash must match exactly. Both hashes are of the file as git checks it out, with
+CRLF line endings: the release asset and a `git clone` give those bytes. A "Raw"
+download from GitHub comes with LF line endings, so it hashes differently even though
+it is the same script.
 
 ## Tests
 
@@ -115,15 +120,15 @@ runtime.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\adaptive-test.ps1
 ```
 
-It needs a console window and makes no system changes, so it is run by hand.
+It needs a console window and makes no system changes, so it is run by hand. The
+animation functions are lifted verbatim out of the script rather than reimplemented, and
+the test re-parses the script to confirm those copies are still current, so it cannot
+quietly pass against a stale copy. See [tests/README.md](tests/README.md).
 
 Every push and pull request runs `.github/workflows/ci.yml` on Windows: the script must
 parse under Windows PowerShell 5.1 with no errors, every function must be named in the
 header's function list, PSScriptAnalyzer's security rules must find nothing, and the
-SHA256 of the result is printed. The animation functions are
-lifted verbatim out of the script rather than reimplemented, and the test re-parses the
-script to confirm those copies are still current, so it cannot quietly pass against a
-stale copy. See [tests/README.md](tests/README.md).
+SHA256 of the result is printed in the run's summary.
 
 ## Requirements
 

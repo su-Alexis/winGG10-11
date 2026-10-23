@@ -50,7 +50,7 @@
 ###################################################################
 ###################################################################
 ##                                                               ##
-##           LAST EDITED : 10 - 23 - 2026 06:45:00 A.M.          ##
+##           LAST EDITED : 10 - 22 - 2026 11:59:26 P.M.          ##
 ##                          Version 25H2                         ##
 ##                                                               ##
 ###################################################################
@@ -80,7 +80,7 @@
 ##  Write-Countdown                 3. . . 2. . . 1. . .
 ##  redundantColors                 set the terminal colours
 ##  Invoke-Step                     run one step, report OK / PARTIAL / ERROR, record it
-##  Write-RunSummary                the tally printed at the end
+##  Write-RunSummary                the tally, red warnings and the readiness report at the end
 ##  CleanMemoryy                    drop variables created during the run
 ##  Confirm-RealUserHive            refuse to run against a virtualized / wrong-user HKCU
 ##  Set-RegValueNet                 .NET registry write, for '*' keys and empty values
@@ -168,7 +168,7 @@
 ##
 ##  NagleAlgoDis                    Nagle's algorithm off per interface
 ##  BlocklistMNNSSM                 write Dan Pollock's hosts blocklist (backs up, atomic swap)
-##  Set-CloudFlareDNS               1.1.1.1 / 1.0.0.1 (+ IPv6 pair) on every connected PHYSICAL adapter
+##  Set-CloudFlareDNS               1.1.1.1 / 1.0.0.1 on connected PHYSICAL adapters, + IPv6 pair where there is global IPv6
 ##  NetResetReboot                  runs a private copy of net-reset-reboot.bat /y /none (never reboots)
 ##  EnableDoH                       DNS over HTTPS for the CloudFlare resolvers, IPv4 and IPv6
 ##
