@@ -1179,8 +1179,8 @@ B1000579... was recomputed off-box and matches, so that exact file was scanned.
 
 # ADDENDUM 8 - SECURITY HARDENING PASS (2026-10-23)
 
-752,858 bytes / 20,253 lines / 92 functions / 58 steps.
-NOT YET RUN on Windows - see "TO VERIFY ON THE VM" at the end.
+753,682 bytes / 20,264 lines / 92 functions / 58 steps (31d703d).
+Run on the VM 2026-10-23 - see "VERIFIED ON THE VM" at the end.
 
 Comes from the read-only security review of main c9c0811 (the Claude Doc "winGG10&11
 security review", 2026-10-23). Rule for every change here: no FPS or latency cost,
@@ -1417,18 +1417,42 @@ does not treat that as a boundary, but a hardening script should not hand it a p
   - The two companion repos' .bat files were byte-identical to main's embedded
     bodies before this change (sha256 d2311e77... and 5b9a62fd...).
 
-## TO VERIFY ON THE VM (normal admin terminal, NOT the Claude app)
+## VERIFIED ON THE VM (2026-10-23, DESKTOP-KGI7IKG, build 26200, normal admin terminal)
 
-  1. scan-harness.ps1 against this file, ABSOLUTE -Source / -OutDir paths. Both
-     embedded .bat bodies changed.
-  2. Full run. Expect 57 OK + the known PARTIAL ("Removing blacklisted packages").
-  3. Squat test: delete C:\Temp\WindowsDebloat&Optimize, recreate it as a STANDARD
-     user, run. It must be renamed *.untrusted-<stamp> and a new one made;
-     icacls on the new one shows only SYSTEM, Administrators (F) and Users (RX).
-  4. No winGG-run-* folder left in C:\ProgramData afterwards.
-  5. Desktop\netreset-logs has the run's log; after the reboot,
-     net-reset-reboot.bat /verify appends to it.
-  6. drivers\etc has hosts.winGG.previous and no hosts.winGG.staged.
-  7. Get-MpPreference shows the 5 ASR ids with action 1; step 57's lines match
-     msinfo32 (Secure Boot, VBS, Memory Integrity) on the VM.
-  8. Shift+right-click a .ps1 shows the two Run entries; a plain right-click does not.
+  1. scan-harness.ps1: "ran (no refusal)" for 122d26a (pr4) and for 31d703d (pr4b).
+  2. Full run (122d26a): 57 OK, 1 PARTIAL ("Removing blacklisted packages" -
+     UndockedDevKit and AugLoop.CBS, as before), 0 failed, 2m48s.
+  3. Squat test: a log folder made from a non-elevated window (owner: the user's
+     SID) was renamed *.untrusted-<stamp> and a new one made; the planted
+     hosts.original in it was not used. The new folder is owned by
+     BUILTIN\Administrators and icacls shows only SYSTEM (F), Administrators (F)
+     and Users (RX).
+     Measured on the same VM: a folder made from an ELEVATED window is owned by
+     BUILTIN\Administrators, and so was the folder older versions made. So an
+     upgrade is not moved aside - only a folder made without admin rights is.
+  4. No winGG-run-* folder left in C:\ProgramData.
+  5. Desktop\netreset-logs has the run's netreset, netsh-config and
+     winsock-catalog files. /verify after the reboot appended to that same log:
+     gateway, internet (8.8.8.8) and DNS all up, and Ethernet0 still had
+     1.1.1.1 / 1.0.0.1 - the DNS set after the reset survived the reboot.
+  6. drivers\etc: hosts.winGG.previous present, no hosts.winGG.staged.
+  7. 5 ASR ids with action 1. Driver blocklist 1. Firewall: all three profiles on,
+     inbound blocked. IPv4 DNS 1.1.1.1 / 1.0.0.1 on Ethernet0.
+  8. Shift+right-click a .ps1 shows "Run with Windows PowerShell (keep open)",
+     "Run with PowerShell 7" and "Unblock"; a plain right-click shows none of them.
+  9. Step 57 on the VM: Windows 11 and TPM 2.0 ok; Secure Boot, VBS, HVCI and IOMMU
+     OFF (a VMware guest without them switched on); blocklist on; no test-signing
+     or debug boot options.
+
+  FOUND AND FIXED (31d703d): PUA read 2. That is Microsoft's own default on current
+  security intelligence (1.329.495.0+), not a choice, so the old "keep anything but
+  0" rule changed nothing. Step 40 now sets anything but 1 to 1 and reads it back.
+  Set-MpPreference -PUAProtection Enabled was run by hand on the VM and read back 1,
+  so tamper protection does not block it.
+
+  NOT COVERED by the VM:
+  - The IPv6 DNS path. The VM's NIC has only a link-local fe80:: address (VMware
+    NAT), so step 26 rightly set IPv4 only. Needs a PC with real IPv6.
+  - The transcript shows "PS>TerminatingError(): ... GetAttributes ... Could not
+    find file" lines from step 25. They are caught "is something already there?"
+    probes, like the older Get-ScheduledTask and pwsh.exe lines - not failures.
