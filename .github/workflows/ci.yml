@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # The script targets Windows PowerShell 5.1, so it is parsed by 5.1, not 7.
+      - name: Parse with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $path = (Resolve-Path -LiteralPath 'winGG10&11.ps1').Path
+          $tokens = $null; $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+          foreach ($e in $errors) { Write-Host "::error file=winGG10&11.ps1,line=$($e.Extent.StartLineNumber)::$($e.Message)" }
+          if ($errors.Count) { exit 1 }
+          Write-Host "Parse: 0 errors"
+
+      # Every top-level function must be named in the header's FUNCTION LIST.
+      - name: Header function list
+        shell: powershell
+        run: |
+          $path = (Resolve-Path -LiteralPath 'winGG10&11.ps1').Path
+          $tokens = $null; $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+          $fns = @($ast.EndBlock.Statements |
+              Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] } |
+              ForEach-Object Name)
+          $listed = @(Get-Content -LiteralPath $path -TotalCount 300 |
+              Where-Object { $_ -match '^##  [A-Za-z][\w-]+\s{2,}' } |
+              ForEach-Object { (($_ -replace '^##  ', '') -split '\s{2,}')[0] })
+          $missing = @($fns | Where-Object { $listed -notcontains $_ })
+          foreach ($m in $missing) { Write-Host "::error file=winGG10&11.ps1::$m is not in the header FUNCTION LIST" }
+          if ($missing.Count) { exit 1 }
+          Write-Host "Header lists all $($fns.Count) functions"
+
+      # Security rules only. Style rules (Write-Host and the like) are a choice this script made.
+      - name: PSScriptAnalyzer security rules
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.23.0 -Scope CurrentUser -Force
+          $rules = @(
+              'PSAvoidUsingInvokeExpression'
+              'PSAvoidUsingPlainTextForPassword'
+              'PSAvoidUsingConvertToSecureStringWithPlainText'
+              'PSAvoidUsingUsernameAndPasswordParams'
+              'PSUsePSCredentialType'
+              'PSAvoidUsingComputerNameHardcoded'
+              'PSAvoidUsingAllowUnencryptedAuthentication'
+              'PSAvoidUsingBrokenHashAlgorithms'
+          )
+          $found = @(Invoke-ScriptAnalyzer -Path 'winGG10&11.ps1' -IncludeRule $rules)
+          foreach ($f in $found) { Write-Host "::error file=winGG10&11.ps1,line=$($f.Line)::$($f.RuleName): $($f.Message)" }
+          if ($found.Count) { exit 1 }
+          Write-Host "No security-rule findings"
+
+      - name: SHA256
+        shell: pwsh
+        run: |
+          $h = (Get-FileHash -Algorithm SHA256 -LiteralPath 'winGG10&11.ps1').Hash
+          Write-Host "SHA256 $h"
+          "SHA256 of winGG10&11.ps1 as checked out (CRLF): ``$h``" >> $env:GITHUB_STEP_SUMMARY

@@ -19,17 +19,18 @@ Every step goes through one harness, `Invoke-Step`, which:
   - clears and counts `$Error` per step, so a failure inside a step surfaces as
     PARTIAL with the actual message rather than being swallowed or killing the run
   - times every step and feeds a dot-leader run summary at the end
-  - shows a live braille spinner with a ticking elapsed counter on 29 of the 44
+  - shows a live braille spinner with a ticking elapsed counter on 41 of the 58
     steps (the quiet ones; noisy steps keep the classic `[ PROCESS ]` box so
     their own output is not fought over)
   - detects when output is redirected or piped and silently drops back to static
     rendering, so wrapping the script in a logger cannot shred the display
 
-A full transcript of every run lands in `C:\Temp\WindowsDebloat&Optimize`.
+A full transcript of every run lands in `C:\Temp\WindowsDebloat&Optimize`, which is
+locked to administrators on every run (ADDENDUM 8).
 
 ---
 
-## THE STEPS  (54, numbered in run order - refreshed 2026-10-23)
+## THE STEPS  (58, numbered in run order - refreshed 2026-10-23, ADDENDUM 8)
 
 ### Preparation
   1.  Building Desktop tools + God Mode
@@ -51,12 +52,12 @@ A full transcript of every run lands in `C:\Temp\WindowsDebloat&Optimize`.
   36. Disabling Activity History
   37. Disabling cross-device clipboard sync     local Win+V history deliberately kept
   38. Restricting Delivery Optimization         LAN peers only, stops seeding to strangers
-  41. Disabling error reporting and CEIP
-  42. Restricting background app access
-  43. Disabling Windows Copilot
-  44. Muzzling Edge telemetry                   Edge is kept (WebView2), so it is muzzled
-  47. Blocking ads, tips and web suggestions    lock screen / Start / Settings ads, web search
-  48. Disabling remaining telemetry tasks       appraiser, Autochk, feedback prompts, MRT reporting
+  44. Disabling error reporting and CEIP
+  45. Restricting background app access
+  46. Disabling Windows Copilot
+  47. Muzzling Edge telemetry                   Edge is kept (WebView2), so it is muzzled
+  50. Blocking ads, tips and web suggestions    lock screen / Start / Settings ads, web search
+  51. Disabling remaining telemetry tasks       appraiser, Autochk, feedback prompts, MRT reporting
 
 ### Explorer and shell
   12. Removing 3D Objects from Explorer
@@ -64,13 +65,13 @@ A full transcript of every run lands in `C:\Temp\WindowsDebloat&Optimize`.
   15. Showing seconds in the system clock
   23. Disabling the On-Screen Keyboard
   24. Disabling Aero Shake
-  46. Setting visual effects to performance     ClearType explicitly preserved
-  49. Applying Explorer and system extras       nav pane, BSOD detail, Insider page; Start
+  49. Setting visual effects to performance     ClearType explicitly preserved
+  52. Applying Explorer and system extras       nav pane, BSOD detail, Insider page; Start
                                                 "Recommended" hidden on Enterprise/Education/SE only
-  50. Restoring Windows Photo Viewer            back in Open with / Default apps
-  51. Adding Windows Update to Control Panel
-  52. Adding context menu tools                 admin consoles, hash, take ownership, unblock...
-  53. Restoring the classic context menu        Windows 11 only; the revert command is printed
+  53. Restoring Windows Photo Viewer            back in Open with / Default apps
+  54. Adding Windows Update to Control Panel
+  55. Adding context menu tools                 admin consoles, hash, take ownership, unblock...
+  56. Restoring the classic context menu        Windows 11 only; the revert command is printed
 
 ### Performance and gaming
   14. Enabling .NET 3.5                         many older games still need it
@@ -82,29 +83,40 @@ A full transcript of every run lands in `C:\Temp\WindowsDebloat&Optimize`.
   27. Setting the Ultimate Performance power plan
   28. Disabling USB/PCIe/NIC power saving       selective suspend, PCIe ASPM, NIC power saving
   29. Tuning scheduler and timer resolution     Win32PrioritySeparation=38, GlobalTimerResolutionRequests=1
-  45. Reclaiming disk space                     hibernation off, Reserved Storage off
+  48. Reclaiming disk space                     hibernation off, Reserved Storage off
 
   Also applied inside step 17: `bcdedit /deletevalue useplatformclock` (Windows picks
   the timer again) and `disabledynamictick yes` (boot timer latency). UNTESTED ON REAL
   FIRMWARE - see the caution below.
 
 ### Network
-  21. Applying the hosts blocklist              13,108 sinkholed domains
-  25. Setting DNS to CloudFlare                 1.1.1.1 / 1.0.0.1
-  26. Resetting the local network stack
-  39. Enabling DNS over HTTPS                   encrypts the CloudFlare queries
+  21. Applying the hosts blocklist              13,108 sinkholed domains, atomic swap
+  25. Resetting the local network stack         runs a private copy of net-reset-reboot.bat
+  26. Setting DNS to CloudFlare                 1.1.1.1 / 1.0.0.1, plus 2606:4700:4700::1111 /
+                                                ::1001 on adapters with IPv6 (after the reset now)
+  39. Enabling DNS over HTTPS                   encrypts the CloudFlare queries, IPv4 and IPv6
 
 ### Security hardening
   22. Disabling AutoRun                         AutoRun.inf -> @SYS:DoesNotExist
   30. Hardening SMB (v1 + guest auth)           EternalBlue transport, guest fallback
   31. Disabling LLMNR, mDNS and NetBIOS-NS      all three broadcast name protocols
-  32. Hardening credential storage              WDigest off, LSA RunAsPPL on
+  32. Hardening credential storage              WDigest off, LSA RunAsPPL on, NTLMv2 only
   33. Removing the PowerShell v2 engine         predates AMSI and script-block logging
   34. Completing AutoRun hardening              NoDriveTypeAutoRun=255
-  40. Disabling legacy remote access            WPAD, Remote Assistance, Remote Registry
+  40. Hardening Microsoft Defender              PUA blocking + 5 ASR rules; skipped under another AV
+  41. Enabling the vulnerable driver blocklist  BYOVD protection; can stop OLD fan/RGB/OC tools
+  42. Checking firewall and Remote Desktop      firewall back on if something turned it off;
+                                                RDP left as it is, but made to require NLA
+  43. Disabling legacy remote access            WPAD, Remote Assistance, Remote Registry
+
+### Report
+  57. Checking anti-cheat readiness             READ-ONLY: Windows 11, TPM 2.0, Secure Boot,
+                                                VBS, Memory Integrity, IOMMU, driver blocklist,
+                                                test-signing / debug boot. Repeated in the summary
 
 ### Accounts
-  54. Built-in Administrator account (optional) OPT-IN: password required, blank Enter skips
+  58. Built-in Administrator account (optional) OPT-IN: password required, UAC turned on for it,
+                                                blank Enter skips
 
 ---
 
@@ -139,16 +151,20 @@ bloat returns the moment a second account is created.
 
 Written to the Desktop on every run, and usable standalone afterwards:
 
-  cleanup_main.bat        452 lines   interactive disk cleanup, ticks what you
+  cleanup_main.bat        476 lines   interactive disk cleanup, ticks what you
                                       want removed, warns on the dangerous
                                       handlers (Downloads, Windows.old, ESD)
-  net-reset-reboot.bat    644 lines   full network stack reset with logging,
+  net-reset-reboot.bat    657 lines   full network stack reset with logging,
                                       backup and a verify mode
-  net-reset-lite.bat      833 lines   lighter variant
+  net-reset-lite.bat      834 lines   lighter variant
   God Mode                            every Control Panel task in one folder
 
 The network reset refuses to run over RDP or a remote session unless forced -
 that is the failure mode that strands a machine.
+
+Step 25 does not run the Desktop copy. It writes the same bytes to its private work
+folder, runs that, and copies the logs to `Desktop\netreset-logs`, where the Desktop
+copy's `/verify` finds them after the reboot (ADDENDUM 8).
 
 ---
 
@@ -156,14 +172,24 @@ that is the failure mode that strands a machine.
 
   - System restore point created before anything changes
   - hosts.original written once and never overwritten, plus a timestamped
-    backup on every run, and the hosts file is written to temp, verified,
-    then swapped in - never edited in place
+    backup on every run. The new hosts file is staged next to the real one in
+    drivers\etc (admin-only), verified, then swapped in with one atomic
+    [IO.File]::Replace - never edited in place (ADDENDUM 8)
+  - Nothing is EXECUTED from a folder a normal user can write to. The SYSTEM
+    helper and the network reset run from a random, admin-only work folder in
+    ProgramData, deleted at the end of the run. cmd.exe gets /d (no AutoRun),
+    and cmd / powershell are called by full path (ADDENDUM 8)
   - Idempotent: verified across consecutive runs with zero registry, AppX,
-    DNS or scheduled-task drift
-  - No remote code execution, no downloads, no base64, no Defender tampering,
-    no ACL changes, no disk or partition operations, and no account changes
-    unless you opt in at the last step (ADDENDUM 7)
-  - Exactly one -Recurse delete in the whole script, guarded by Test-Path
+    DNS or scheduled-task drift (before ADDENDUM 8 - re-check on the VM)
+  - No remote code execution, no downloads, no base64, and no account changes
+    unless you opt in at the last step (ADDENDUM 7). Defender is only ever
+    strengthened, never turned off or given exclusions. The only ACL changes are
+    to this script's own two folders (ADDENDUM 8). No disk or partition operations
+  - TPM, Secure Boot, VBS, Memory Integrity and the IOMMU are never changed -
+    step 57 only reports them
+  - Recursive deletes: the 3D Objects registry keys (guarded by Test-Path), and
+    the two folders this script creates for itself - the work folder (only if it
+    is still admin-owned and not a junction) and the HKCU probe folder
   - A SYSTEM fallback for provisioned-package removal, using a transient
     scheduled task that unregisters itself in a finally block
 
@@ -202,8 +228,15 @@ that is the failure mode that strands a machine.
      every validity test then failed. It now gives up after ten attempts and
      answers "nn" for itself, taking the existing no-reboot branch.
 
-  5. DNS is forced to CloudFlare on every connected physical adapter. On a
-     network that requires specific DNS this breaks resolution until reverted.
+  5. DNS is forced to CloudFlare on every connected physical adapter - IPv6 too
+     where the adapter has a global IPv6 address (ADDENDUM 8). On a network that
+     requires specific DNS this breaks resolution until reverted.
+
+  6. Two of the new security steps can stop an OLD hardware tool: the vulnerable
+     driver blocklist (step 41) and the matching ASR rule (step 40) refuse
+     drivers with known holes, such as old RTCore64 or WinRing0 builds used by
+     some fan, RGB and overclocking tools. Update the tool first. Undo paths are
+     in ADDENDUM 8.
 
 ---
 
@@ -248,6 +281,10 @@ NOT touch any of these:
 That matters specifically for Vanguard (Valorant), which requires TPM 2.0 and
 Secure Boot on Windows 11 - both intact. EAC, BattlEye, FACEIT and ESEA
 inspect the same surface and are equally unaffected.
+
+CHANGED 2026-10-23 (ADDENDUM 8): the vulnerable-driver blocklist is now switched ON
+by step 41. That is the direction anti-cheats want, not a conflict. Everything else in
+the list above is still untouched, and step 57 reports it.
 
 The 13,108-entry hosts blocklist was checked against gaming and anti-cheat
 domains. Steam, Riot, Battle.net, Epic, EasyAntiCheat, BattlEye, FACEIT,
@@ -324,7 +361,11 @@ with two instances running concurrently.
                             queues can ADD latency
   Disabling filter/sticky keys  a popup annoyance, not a latency issue
   Game Mode                 net-positive on Windows 11 now; leave it alone
-  Memory Integrity / HVCI   frametime cost AND known anti-cheat conflicts
+  Memory Integrity / HVCI   CORRECTED 2026-10-23 (ADDENDUM 8): still not switched on
+                            (reboot, can refuse old drivers), but this reason was wrong.
+                            The cost is small on CPUs with MBEC/GMET, and anti-cheats
+                            now ASK for it (Vanguard may, FACEIT needs VBS) - never
+                            turn it off for gaming
   Controlled Folder Access  breaks game saves until each title is allowlisted
 
 ## PERFORMANCE
@@ -990,7 +1031,9 @@ changes when:
     so they only differ when one side is looking at an overlay. Package identity
     cannot be used: GetCurrentPackageFullName reports "no package" from inside that
     shell. The probe is passed as plain text, not -EncodedCommand, and writes its
-    answer to the log folder (C:\Temp is outside anything an MSIX app redirects).
+    answer under the log folder (C:\Temp is outside anything an MSIX app redirects) -
+    since ADDENDUM 8 into a fresh subfolder only you and admins can write, deleted
+    straight after.
   - The elevated account is not the desktop user (over-the-shoulder UAC with another
     admin's password). HKCU would then be that admin's hive.
 
@@ -1031,6 +1074,9 @@ zeroed straight afterwards. The step prints how to turn it off again
 Worth knowing before typing a password: that account runs everything fully elevated
 with no UAC prompt, and Store / UWP apps (Xbox, Game Pass) typically refuse to open
 under it. Your own account is already an administrator through UAC.
+CHANGED 2026-10-23 (ADDENDUM 8): when step 58 enables it, it now also sets
+FilterAdministratorToken=1 first, so the account gets UAC prompts - which is also the
+documented fix for Store apps refusing to open under it.
 
 ## LEFT OUT, ON PURPOSE
 
@@ -1128,3 +1174,285 @@ B1000579... was recomputed off-box and matches, so that exact file was scanned.
      pageDisableTelemetry (dmwappushservice) INCOMPLETE; pageEnableAdministrator
      SKIPPED; pageDisableCopilot UNSUPPORTED. Anything else short of EFFECTIVE,
      PARTIAL, MANUAL or UNVERIFIABLE is a real problem.
+
+---
+
+# ADDENDUM 8 - SECURITY HARDENING PASS (2026-10-23)
+
+753,682 bytes / 20,264 lines / 92 functions / 58 steps (31d703d).
+Run on the VM 2026-10-23 - see "VERIFIED ON THE VM" at the end.
+
+Comes from the read-only security review of main c9c0811 (the Claude Doc "winGG10&11
+security review", 2026-10-23). Rule for every change here: no FPS or latency cost,
+and nothing an anti-cheat checks is weakened. Most of it fixes where the script writes
+and runs files, not what it configures.
+
+## THE PROBLEM: AN ELEVATED SCRIPT RUNNING USER-WRITABLE FILES
+
+  - C:\Temp\WindowsDebloat&Optimize was made with New-Item, so it inherited
+    "Authenticated Users: Modify" from C:\. Any signed-in user could also create it
+    first, or make it a junction. Invoke-AsSystem wrote its payload there and then
+    ran it AS SYSTEM, so anything that swapped the file in between got SYSTEM. On a
+    failed hosts write, the backup from that folder was copied INTO
+    System32\drivers\etc\hosts.
+  - NetResetReboot ran net-reset-reboot.bat from the Desktop, elevated. Anything
+    running as you could edit it between Build-DesktopTools writing it and the step
+    running it - a free UAC bypass. A Desktop that OneDrive syncs widens that to any
+    device signed in to the account.
+  - The new hosts file was staged in %TEMP%, checked, then copied - so it could be
+    changed between the check and the copy.
+  - cmd /c runs HKCU\Software\Microsoft\Command Processor\AutoRun first, and HKCU
+    is writable without elevation. User-level environment variables (ComSpec,
+    SystemRoot, SystemDrive...) are inherited by the elevated process.
+
+Severity is "same-user to admin/SYSTEM": something already running as you. Windows
+does not treat that as a boundary, but a hardening script should not hand it a path.
+
+## THE FIX: TWO FOLDERS, TWO JOBS
+
+  LOG folder    C:\Temp\WindowsDebloat&Optimize, where it has always been. Transcripts,
+                hosts backups, reports. Initialize-LogFolder runs before anything is
+                written there:
+                  - parent is a junction -> log to %ProgramData%\WindowsDebloat&Optimize
+                  - folder is a junction, or NOT owned by Administrators / SYSTEM /
+                    TrustedInstaller -> renamed to <name>.untrusted-<stamp> and a fresh
+                    one made (so a hosts.original planted there is never trusted)
+                  - then: owner Administrators, nothing inherited, SYSTEM +
+                    Administrators full control, Users read (open the logs without
+                    elevating). Re-applied every run.
+                Nothing is executed from it any more, so if locking it fails the run
+                prints that and carries on.
+  WORK folder   %ProgramData%\winGG-run-<random GUID>. Created with its permissions in
+                the same call (no window with inherited ones), SYSTEM + Administrators
+                only. Only made if %ProgramData% itself still has Windows' own
+                permissions. Removed at the end of the run, and at a stop at the
+                real-hive check; folders a crashed run left behind are swept up too
+                (only if still admin-owned and not junctions).
+
+  Run from the work folder now: the SYSTEM helper payload (Invoke-AsSystem) and
+  net-reset-reboot.bat (step 25). No work folder = the SYSTEM helper is skipped and
+  step 25 fails with a clear message; nothing falls back to an unsafe place.
+
+  Step 25 writes the .bat with the same writer Build-DesktopTools uses (Write-BatFile),
+  so the bytes are identical to the Desktop copy. It copies the reset's logs to
+  Desktop\netreset-logs afterwards, whatever the exit code, so the Desktop copy's
+  /verify still appends to the right log after the reboot.
+
+## THE HOSTS FILE
+
+  - Staged as drivers\etc\hosts.winGG.staged (admin-only, same volume), verified
+    (>= 100 entries), then swapped in with [IO.File]::Replace: one rename, and the
+    hosts file keeps its own permissions. The old one becomes
+    drivers\etc\hosts.winGG.previous.
+  - Read-only hosts file: cleared for the swap and set read-only again after.
+  - If Replace fails while hosts is still there (something holding it open), it
+    falls back to copying. If hosts is missing after a failure, it is restored from
+    hosts.winGG.previous - an admin-only file - never from the log folder.
+  - hosts.original and the timestamped backups in the log folder are unchanged.
+
+## SMALLER SCRIPT-CODE FIXES
+
+  - cmd.exe and powershell.exe by full path, from [Environment]::GetFolderPath
+    ('Windows'), never $env:ComSpec / $env:SystemRoot / PATH. Applies to the
+    self-elevation relaunch, the PS7 hand-over, the SYSTEM task and the HKCU probe.
+  - Every cmd /c is now cmd /d /c (skips AutoRun): bcdedit, powercfg (6 calls),
+    the network reset.
+  - The restore point uses the drive Windows is on, not $env:SystemDrive.
+  - Write-BatFile deletes a link at the target path instead of writing through it.
+    It reads attributes with [IO.File]::GetAttributes, which sees a link to a
+    missing file - Test-Path calls that "not there".
+  - HKCU probe: into a fresh hkcu-probe-<GUID> subfolder only you and admins can
+    write, deleted straight after. A fake "matching" answer could otherwise have
+    hidden the MSIX warning.
+  - Built-in Administrator (step 58): when it enables the account it first sets
+    HKLM\...\Policies\System\FilterAdministratorToken=1 (UAC Admin Approval Mode for
+    RID 500). It then gets UAC prompts, and Store / Xbox apps open under it. If the
+    value cannot be written, the account stays disabled. An already-enabled account
+    is still left as it is.
+  - Context menu: Unblock, "Run with Windows PowerShell (keep open)" and "Run with
+    PowerShell 7" are now Shift+right-click only. Unblock strips the Mark of the Web
+    that SmartScreen and Office macro blocking key on; the two Run entries run a
+    script with -ExecutionPolicy Bypass and no prompt. The admin Run entries keep
+    their UAC prompt as the confirmation and stay on the normal menu. "Extract
+    contents" for .msi now uses New-PathSafeCmd + Start-Process msiexec like every
+    other path verb: the old cmd line was safe from & only because of the quotes,
+    and still expanded %NAME% in file names.
+
+## EMBEDDED .BAT CHANGES (BOTH NEED THE AV RE-SCAN)
+
+  - cleanup_main.bat: the self-elevation pasted %~f0 into '...' for PowerShell
+    without doubling single quotes. C:\Users\O'Neil\Desktop broke elevation, and a
+    crafted folder name could run PowerShell of its own (self-injection - same user).
+    Now set "PSSELF=%~f0" then %PSSELF:'=''%, BEFORE the if block (cmd expands
+    %...% for a whole block at parse time).
+  - net-reset-reboot.bat: same fix with net-reset-lite.bat's existing pattern -
+    PSSCRIPT=%SCRIPT:'=''% and PSARGS=!RELAUNCH:'=''! behind an "if defined" guard,
+    set after the menu so the menu's /nomenu choice is included.
+  - Companion repo PRs keep Windows-Cleanup and Network-Stack-Reset byte-identical
+    to these embedded bodies (sync rule). cleanup_main.bat edits triggered
+    CryptoDrainer.C!MTB once before (KNOWN LIMITS 1), so scan before merging.
+
+## CHANGED STEPS
+
+  32 Hardening credential storage
+       RunAsPPL stays 1, on purpose. With UEFI Secure Boot, 1 = on WITH a UEFI lock:
+       deleting the value does not turn it off (that needs Microsoft's LSA opt-out
+       tool), so admin malware cannot switch it off with one registry write. 2 = on
+       without the lock, the clean Windows 11 22H2+ default.
+       ADDED LmCompatibilityLevel=5 (NTLMv2 only; refuse LM and NTLMv1). Windows has
+       only SENT NTLMv2 by default since Vista, and 24H2+ has no NTLMv1 at all, so
+       this is a no-op there. On Windows 10 it refuses incoming NTLMv1 sign-ins,
+       which only pre-2007 devices still try.
+  26 Setting DNS to CloudFlare
+       Now ALSO 2606:4700:4700::1111 / ::1001 on adapters with a global IPv6
+       address. Before, the router's IPv6 DNS (RA / DHCPv6) stayed active next to
+       1.1.1.1, and whatever Windows sent there went to the ISP in plain text,
+       past DoH. Adapters without global IPv6 stay IPv4-only, and any IPv6 DNS left
+       on them is printed. MOVED after the network reset: netsh int ipv6 reset can
+       clear hand-set IPv6 DNS, and the .bat only saves and re-applies IPv4 ones.
+  39 Enabling DNS over HTTPS
+       DoH templates for the two IPv6 addresses as well.
+
+## NEW STEPS
+
+  40 Hardening Microsoft Defender
+       PUA protection on, plus five ASR rules (all work on Home):
+         56a863a9-875e-4185-98a7-b882c64b5ce5  abuse of exploited vulnerable signed drivers
+         9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2  credential stealing from LSASS
+         e6db77e5-3df2-4cf1-b95a-636979351e5b  persistence through WMI event subscription
+         b2b3f03d-6a65-4f7b-a9c7-1c7ef74a9ba4  untrusted / unsigned processes from USB
+         be9ba2d9-53ea-4cdc-84e5-9b1eeee46550  executable content from email / webmail
+       Added with Add-MpPreference (Set- would replace the whole rule list). A rule you
+       already configured is kept as it is. $script:AsrAction can be set to
+       'AuditMode' for a trial run (Defender Operational log: 1121 = blocked,
+       1122 = audited). No exclusions are ever added.
+       PUA is set to 1 (block) unless it already is, then read back. CHANGED after the
+       VM run: it used to keep any value but 0, but 2 (audit, blocks nothing) is
+       Microsoft's own default on current security intelligence (1.329.495.0+), so on
+       almost every up-to-date PC the old rule changed nothing.
+       Skipped when Defender is not the active AV. Windows Security is then asked for
+       other antivirus: another one reporting itself on = "X is your active
+       antivirus", nothing changed; NOTHING on = a red NO ACTIVE ANTIVIRUS warning,
+       repeated at the end of the run summary. Defender is never switched back on.
+       Side effects: unsigned tools run straight from a USB stick are blocked; some
+       "free" bundleware installers are blocked as PUA.
+       Undo: Remove-MpPreference -AttackSurfaceReductionRules_Ids <id>
+             Set-MpPreference -PUAProtection AuditMode   (Windows' default)
+  41 Enabling the vulnerable driver blocklist
+       HKLM\SYSTEM\CurrentControlSet\Control\CI\Config\VulnerableDriverBlocklistEnable=1.
+       Stops "bring your own vulnerable driver" - the usual way ransomware and public
+       kernel cheats get into the kernel. Already the default on Windows 11 22H2+
+       (missing value = on), so this mostly fixes upgraded or tweaked machines; the
+       step says which case it found. After a reboot.
+       Side effect: old fan / RGB / overclocking tools built on a listed driver
+       version (old RTCore64, WinRing0) can no longer load it. Defender already
+       quarantines WinRing0 on its own. Update the tool first.
+       Undo: Windows Security > Device security > Core isolation details >
+             Microsoft Vulnerable Driver Blocklist.
+  42 Checking firewall and Remote Desktop
+       A firewall profile that is OFF is turned back on, unless another firewall is
+       registered with Windows Security (two at once is its own problem). An
+       inbound default of Allow goes back to Block. Remote Desktop is NOT turned
+       off - the script cannot know you do not use it - but if it is on it is made
+       to require Network Level Authentication. Parsec, Moonlight, Sunshine and
+       Steam Link do not use RDP.
+  57 Checking anti-cheat readiness (READ-ONLY)
+       One line each, [ ok ] / [ OFF ] / [ ? ]:
+         Windows 11                    FACEIT requires it from 2026-10-14
+         TPM 2.0 present and ready     Vanguard, FACEIT, BF6 (Javelin), BO7 (Ricochet)
+         Secure Boot on                same four
+         VBS running                   FACEIT ("VBS to support IOMMU"), maybe Vanguard
+         Memory Integrity running      Vanguard may ask for it
+         IOMMU / DMA protection        FACEIT, maybe Vanguard (Win32_DeviceGuard
+                                       AvailableSecurityProperties contains 3)
+         Driver blocklist on
+         No TESTSIGNING / DEBUG /      every kernel anti-cheat refuses these. Read
+         DISABLE_INTEGRITY_CHECKS      from SystemStartOptions, which is language-
+                                       neutral (bcdedit prints a localised Yes/No)
+       Printed again under the run summary. An OFF line is a BIOS or Windows Security
+       setting to switch on, not a fault in the run.
+       Sources, checked 2026-10-23: Riot "Vanguard security requirements", FACEIT
+       "Windows Security Requirements FAQ", and press coverage for BF6 / BO7.
+
+## DELIBERATELY NOT DONE
+
+  Memory Integrity / VBS switched on   needs a reboot, can refuse old drivers;
+                                       reported by step 57, your choice
+  Credential Guard                     needs VBS, on by default only on Enterprise /
+                                       Education, little extra on a home PC once LSA
+                                       protection is on
+  DisableSmartNameResolution           proposed in the review, then DROPPED: testing
+                                       by SANS and ProPrivacy found Windows still falls
+                                       back to multi-homed queries when a lookup fails.
+                                       NRPT / WFP rules belong in the VPN client
+  RDP switched off                     could lock someone out of a remote machine
+  ASR "prevalence, age or trusted      block unsigned mods, tools and game saves
+  list" rule, Controlled Folder Access
+  DoHPolicy=3 (DoH required)           breaks captive-portal Wi-Fi
+  Kernel-mode hardware stack           needs HVCI; anti-cheat support not verified
+  protection forced on
+  Removing existing Defender           they are yours; the script leaves them alone
+  exclusions                           and adds none
+
+## KNOWN GAPS
+
+  - The Desktop .bat copies are still yours to edit - by design: you run them
+    yourself, through UAC. Only the copy this script runs elevated moved.
+  - A ! in the folder path should be stripped by delayed expansion in the two .bats
+    that use it (net-reset-reboot, net-reset-lite) - from reading the code, not
+    tested. Older than this pass; it would break the launch, not run anything.
+  - The log folder lock is best-effort; nothing depends on it for safety any more.
+
+## HOW IT WAS CHECKED (Linux, PowerShell 7.4.6 - NOT Windows PowerShell 5.1)
+
+  - Parser: 0 errors.
+  - PSScriptAnalyzer 1.23.0: no hits from any security rule (Invoke-Expression,
+    plain-text passwords, ConvertTo-SecureString -AsPlainText, credentials,
+    hard-coded computer names, broken hashes, unencrypted auth). The 25
+    empty-catch findings are the same 25 as on main. The rest is style (Write-Host,
+    ShouldProcess), as before.
+  - The header FUNCTION LIST names every top-level function.
+  - Snippets exercised in isolation: the boot-option match, the productState
+    filter, Invoke-Silently returning $false vs $null, the readiness line format.
+  - The two companion repos' .bat files were byte-identical to main's embedded
+    bodies before this change (sha256 d2311e77... and 5b9a62fd...).
+
+## VERIFIED ON THE VM (2026-10-23, DESKTOP-KGI7IKG, build 26200, normal admin terminal)
+
+  1. scan-harness.ps1: "ran (no refusal)" for 122d26a (pr4) and for 31d703d (pr4b).
+  2. Full run (122d26a): 57 OK, 1 PARTIAL ("Removing blacklisted packages" -
+     UndockedDevKit and AugLoop.CBS, as before), 0 failed, 2m48s.
+  3. Squat test: a log folder made from a non-elevated window (owner: the user's
+     SID) was renamed *.untrusted-<stamp> and a new one made; the planted
+     hosts.original in it was not used. The new folder is owned by
+     BUILTIN\Administrators and icacls shows only SYSTEM (F), Administrators (F)
+     and Users (RX).
+     Measured on the same VM: a folder made from an ELEVATED window is owned by
+     BUILTIN\Administrators, and so was the folder older versions made. So an
+     upgrade is not moved aside - only a folder made without admin rights is.
+  4. No winGG-run-* folder left in C:\ProgramData.
+  5. Desktop\netreset-logs has the run's netreset, netsh-config and
+     winsock-catalog files. /verify after the reboot appended to that same log:
+     gateway, internet (8.8.8.8) and DNS all up, and Ethernet0 still had
+     1.1.1.1 / 1.0.0.1 - the DNS set after the reset survived the reboot.
+  6. drivers\etc: hosts.winGG.previous present, no hosts.winGG.staged.
+  7. 5 ASR ids with action 1. Driver blocklist 1. Firewall: all three profiles on,
+     inbound blocked. IPv4 DNS 1.1.1.1 / 1.0.0.1 on Ethernet0.
+  8. Shift+right-click a .ps1 shows "Run with Windows PowerShell (keep open)",
+     "Run with PowerShell 7" and "Unblock"; a plain right-click shows none of them.
+  9. Step 57 on the VM: Windows 11 and TPM 2.0 ok; Secure Boot, VBS, HVCI and IOMMU
+     OFF (a VMware guest without them switched on); blocklist on; no test-signing
+     or debug boot options.
+
+  FOUND AND FIXED (31d703d): PUA read 2. That is Microsoft's own default on current
+  security intelligence (1.329.495.0+), not a choice, so the old "keep anything but
+  0" rule changed nothing. Step 40 now sets anything but 1 to 1 and reads it back.
+  Set-MpPreference -PUAProtection Enabled was run by hand on the VM and read back 1,
+  so tamper protection does not block it.
+
+  NOT COVERED by the VM:
+  - The IPv6 DNS path. The VM's NIC has only a link-local fe80:: address (VMware
+    NAT), so step 26 rightly set IPv4 only. Needs a PC with real IPv6.
+  - The transcript shows "PS>TerminatingError(): ... GetAttributes ... Could not
+    find file" lines from step 25. They are caught "is something already there?"
+    probes, like the older Get-ScheduledTask and pwsh.exe lines - not failures.

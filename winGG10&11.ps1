@@ -50,7 +50,7 @@
 ###################################################################
 ###################################################################
 ##                                                               ##
-##           LAST EDITED : 10 - 22 - 2026 06:30:46 P.M.          ##
+##           LAST EDITED : 10 - 23 - 2026 06:45:00 A.M.          ##
 ##                          Version 25H2                         ##
 ##                                                               ##
 ###################################################################
@@ -101,6 +101,15 @@
 ##  Show-ArtCascade                 line-by-line cascade when in-place animation cannot run
 ##  Restore-ConsoleColour           put the console colours back after an animation
 ##  Clear-ProgressBar               clear any leftover Write-Progress bars
+##  New-LockedDirectorySecurity     admin/SYSTEM-only folder permissions, nothing inherited
+##  New-LockedDirectory             create a folder with those permissions in one call
+##  Test-DirectoryTrusted           real folder, admin-owned, nobody else can rename or re-ACL it
+##  Initialize-LogFolder            lock down C:\Temp\WindowsDebloat&Optimize (or move it aside)
+##  Get-WorkFolder                  this run's private ProgramData folder for executed files
+##  Remove-WorkFolder               delete it (and any a crashed run left behind)
+##  Write-BatFile                   write an embedded .bat as CRLF ASCII, never through a link
+##  Test-DefenderActive             is Microsoft Defender the active antivirus?
+##  Write-ReadinessLine             one line of the anti-cheat readiness report
 ##
 ##
 ##  DEBLOAT:
@@ -152,26 +161,30 @@
 ##  AddControlPanelWU               Windows Update entry in Control Panel
 ##  AddContextMenuTools             right-click tools (admin consoles, hash, take ownership...)
 ##  SetClassicContextMenu           Windows 10 right-click menu on Windows 11
-##  EnableBuiltinAdmin              OPT-IN: enable built-in Administrator, password required
+##  EnableBuiltinAdmin              OPT-IN: enable built-in Administrator, password + UAC required
 ##
 ##
 ##  NETWORK:
 ##
 ##  NagleAlgoDis                    Nagle's algorithm off per interface
-##  BlocklistMNNSSM                 write Dan Pollock's hosts blocklist (backs up first)
-##  Set-CloudFlareDNS               1.1.1.1 / 1.0.0.1 on every connected PHYSICAL adapter
-##  NetResetReboot                  runs net-reset-reboot.bat /y /none  (resets, never reboots)
-##  EnableDoH                       DNS over HTTPS for the CloudFlare resolvers
+##  BlocklistMNNSSM                 write Dan Pollock's hosts blocklist (backs up, atomic swap)
+##  Set-CloudFlareDNS               1.1.1.1 / 1.0.0.1 (+ IPv6 pair) on every connected PHYSICAL adapter
+##  NetResetReboot                  runs a private copy of net-reset-reboot.bat /y /none (never reboots)
+##  EnableDoH                       DNS over HTTPS for the CloudFlare resolvers, IPv4 and IPv6
 ##
 ##
 ##  SECURITY HARDENING:
 ##
 ##  DisableSMBv1                    SMBv1 off, insecure guest auth blocked
 ##  DisableLLMNRandNetBIOS          LLMNR, mDNS and NetBIOS-NS off
-##  HardenCredentialStorage         WDigest off, LSA Protection (RunAsPPL) on
+##  HardenCredentialStorage         WDigest off, LSA Protection (RunAsPPL) on, NTLMv2 only
 ##  DisablePowerShellV2             remove the pre-AMSI PowerShell v2 engine
 ##  CompleteAutoRunHardening        NoDriveTypeAutoRun=255, NoAutorun=1
 ##  DisableLegacyRemoteAccess       WPAD, Remote Assistance, Remote Registry off
+##  HardenDefender                  PUA blocking + 5 ASR rules (skipped under another antivirus)
+##  EnableDriverBlocklist           Microsoft vulnerable driver blocklist on
+##  CheckFirewallAndRdp             firewall back on if something turned it off; RDP needs NLA
+##  Show-AntiCheatReadiness         READ-ONLY: TPM, Secure Boot, VBS/HVCI, IOMMU, boot flags
 ##
 ##
 ##  SYSTEM / TOOLS:
@@ -185,7 +198,8 @@
 ##  WHAT LANDS ON YOUR DESKTOP:
 ##
 ##  cleanup_main.bat                                     (built by Build-DesktopTools)
-##  net-reset-reboot.bat                                 (built, and used by NetResetReboot)
+##  net-reset-reboot.bat                                 (built; NetResetReboot runs its own copy)
+##  netreset-logs\                                       (the reset's logs, copied here after it)
 ##  net-reset-lite.bat                                   (built - no reboot needed)
 ##  GodMode.{ED7BA470-8E54-465E-825C-99712043E01C}       (built - every control panel task)
 ##
@@ -1059,7 +1073,190 @@ Function Write-RunSummary {
         Write-Host ""
         Write-Host "Anything not marked OK is written to the transcript in $DebloatFolder" -ForegroundColor Yellow
     }
+
+    #ADDED 2026-10-23: warnings that need you, then the anti-cheat readiness lines again,
+    #where you will actually see them.
+    if ($script:RunWarnings.Count) {
+        Write-Host ""
+        foreach ($w in $script:RunWarnings) { Write-Host "  $w" -ForegroundColor Red }
+    }
+    if ($script:AntiCheatReport.Count) {
+        Write-Host ""
+        Write-Host "  ANTI-CHEAT READINESS (read-only - this script changed none of these)" -ForegroundColor Cyan
+        foreach ($r in $script:AntiCheatReport) { Write-ReadinessLine $r }
+    }
     Write-Host ""
+}
+
+#===============================================================================================
+#  SECURITY - WHERE THIS SCRIPT WRITES, AND WHAT IT RUNS FROM   (added 2026-10-23)
+#
+#  This script runs elevated, and it used to RUN files from places a normal user can write to:
+#    - C:\Temp\WindowsDebloat&Optimize. New-Item under C:\ inherits "Authenticated Users:
+#      Modify" from the drive root, and C:\ also lets any user create that folder first or plant
+#      a junction there. Invoke-AsSystem wrote its payload into it and then ran it as SYSTEM, so
+#      anything able to swap the file in between got SYSTEM.
+#    - The Desktop. NetResetReboot ran net-reset-reboot.bat from it, elevated - and a Desktop
+#      that OneDrive syncs can be written by any device signed in to that OneDrive.
+#    - %TEMP%, where the hosts file was staged, checked, and only then copied into place.
+#  Two more come from the environment an elevated process inherits:
+#    - cmd.exe /c first runs whatever HKCU\Software\Microsoft\Command Processor\AutoRun says,
+#      and HKCU is writable without elevation. /d skips it, so every cmd here gets /d.
+#    - A user-level environment variable can override ComSpec, SystemRoot, windir or
+#      ProgramData, and the elevated process inherits it. So executables and folders are found
+#      through the OS APIs below, never through $env:.
+#
+#  Two folders, two jobs:
+#    LOG folder   C:\Temp\WindowsDebloat&Optimize, where it has always been: the transcript, the
+#                 hosts backups, the reports. Locked down on every run (no junctions, owned by
+#                 Administrators, SYSTEM + Administrators full control, Users read-only).
+#                 NOTHING is run from it any more, so if it cannot be locked down the run only
+#                 says so and carries on.
+#    WORK folder  %ProgramData%\winGG-run-<random>, created with its permissions already set and
+#                 deleted at the end of the run. Anything that gets EXECUTED lives here. A random
+#                 name cannot be squatted, and %ProgramData% does not let users rename or
+#                 replace what an administrator created in it.
+#===============================================================================================
+$script:WinDir   = [Environment]::GetFolderPath('Windows')
+$script:CmdExe   = Join-Path $script:WinDir 'System32\cmd.exe'
+$script:WinPSExe = Join-Path $script:WinDir 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$script:TrustedOwnerSids = @(
+    'S-1-5-32-544'                                                  #BUILTIN\Administrators
+    'S-1-5-18'                                                      #NT AUTHORITY\SYSTEM
+    'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464' #NT SERVICE\TrustedInstaller
+)
+
+Function New-LockedDirectorySecurity {
+    #SYSTEM and Administrators get full control, -ReadOnlySids read, -ModifySids modify. Nothing
+    #is inherited from the parent and the owner is Administrators. SIDs, not names, because
+    #account names are localised.
+    param([string[]]$ReadOnlySids = @(), [string[]]$ModifySids = @())
+    $sec = New-Object System.Security.AccessControl.DirectorySecurity
+    $sec.SetOwner([Security.Principal.SecurityIdentifier]'S-1-5-32-544')
+    $sec.SetAccessRuleProtection($true, $false)
+    $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    $grants  = @(@('S-1-5-18', 'FullControl'), @('S-1-5-32-544', 'FullControl'))
+    foreach ($s in $ReadOnlySids) { $grants += ,@($s, 'ReadAndExecute') }
+    foreach ($s in $ModifySids)   { $grants += ,@($s, 'Modify') }
+    foreach ($g in $grants) {
+        $sec.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+            ([Security.Principal.SecurityIdentifier]$g[0]), ([Security.AccessControl.FileSystemRights]$g[1]),
+            $inherit, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)))
+    }
+    return $sec
+}
+
+Function New-LockedDirectory {
+    #Creates $Path with $Security applied BY THE CREATE CALL ITSELF. New-Item followed by Set-Acl
+    #leaves a moment in which the folder carries its parent's permissions.
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$Security)
+    if (Test-Path -LiteralPath $Path) { throw "New-LockedDirectory: '$Path' already exists" }
+    if ([IO.Directory].GetMethod('CreateDirectory', [type[]]@([string], [Security.AccessControl.DirectorySecurity]))) {
+        [void][IO.Directory]::CreateDirectory($Path, $Security)                         #.NET Framework (5.1)
+    }
+    else {
+        [void][IO.FileSystemAclExtensions]::Create((New-Object IO.DirectoryInfo $Path), $Security)   #.NET 6+ (7.x)
+    }
+}
+
+Function Test-DirectoryTrusted {
+    #$true when $Path is a real directory (not a junction or symbolic link), owned by
+    #Administrators, SYSTEM or TrustedInstaller, and nobody else may delete or rename it, delete
+    #what is inside it, or change its permissions or owner.
+    param([Parameter(Mandatory)][string]$Path)
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (-not $item.PSIsContainer) { return $false }
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+    $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    if ($script:TrustedOwnerSids -notcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { return $false }
+    $danger = [Security.AccessControl.FileSystemRights]'Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership'
+    foreach ($ace in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($ace.AccessControlType -ne 'Allow') { continue }
+        $sid = $ace.IdentityReference.Value
+        #CREATOR OWNER and OWNER RIGHTS only ever apply to the owner of an item, which is
+        #already checked above or is whoever created that child item.
+        if ($script:TrustedOwnerSids -contains $sid -or $sid -eq 'S-1-3-0' -or $sid -eq 'S-1-3-4') { continue }
+        if ($ace.FileSystemRights -band $danger) { return $false }
+    }
+    return $true
+}
+
+Function Initialize-LogFolder {
+    #Returns the log folder to use, locked down as described above. Never throws: the logs are
+    #worth keeping even when they cannot be protected, because nothing is executed from them.
+    param([Parameter(Mandatory)][string]$Path)
+    $readers = @('S-1-5-32-545')   #BUILTIN\Users: open the logs without elevating, change nothing
+    try {
+        $parent = Split-Path -Path $Path -Parent
+        if (-not (Test-Path -LiteralPath $parent)) { New-Item -Path $parent -ItemType Directory -Force -ErrorAction Stop | Out-Null }
+        if ((Get-Item -LiteralPath $parent -Force -ErrorAction Stop).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            #Writing through a planted junction would create files wherever it points.
+            $fallback = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'WindowsDebloat&Optimize'
+            Write-Host "  $parent is a junction or symbolic link - logging to $fallback instead." -ForegroundColor Yellow
+            if ($Path -eq $fallback) { throw "$parent is a junction or symbolic link" }
+            return (Initialize-LogFolder -Path $fallback)
+        }
+        if (Test-Path -LiteralPath $Path) {
+            $item  = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+            $owner = (Get-Acl -LiteralPath $Path -ErrorAction Stop).GetOwner([Security.Principal.SecurityIdentifier]).Value
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or ($script:TrustedOwnerSids -notcontains $owner)) {
+                #Not created by an administrator, or pointing somewhere else. Keep it for inspection,
+                #out of the way, and start a clean one. Nothing in it is trusted - hosts.original
+                #included, so a new one is taken from the current hosts file.
+                $aside = '{0}.untrusted-{1:yyyyMMdd-HHmmss}' -f (Split-Path -Path $Path -Leaf), (Get-Date)
+                Rename-Item -LiteralPath $Path -NewName $aside -ErrorAction Stop
+                Write-Host "  The log folder was not made by an administrator (owner $owner) - moved aside as $aside." -ForegroundColor Yellow
+            }
+        }
+        if (Test-Path -LiteralPath $Path) {
+            #Re-applied every run. Older runs left this folder writable by every signed-in user.
+            Set-Acl -LiteralPath $Path -AclObject (New-LockedDirectorySecurity -ReadOnlySids $readers) -ErrorAction Stop
+        }
+        else {
+            New-LockedDirectory -Path $Path -Security (New-LockedDirectorySecurity -ReadOnlySids $readers)
+        }
+    }
+    catch {
+        Write-Host "  Could not lock down the log folder ($($_.Exception.Message))." -ForegroundColor Yellow
+        Write-Host "  Logs still go there; nothing is run from it, so the run carries on." -ForegroundColor Yellow
+        if (-not (Test-Path -LiteralPath $Path)) { New-Item -Path $Path -ItemType Directory -Force | Out-Null }
+    }
+    return $Path
+}
+
+$script:WorkFolder = $null
+Function Get-WorkFolder {
+    #This run's private folder for anything that gets executed. Created on first use; $null when
+    #it cannot be, and every caller treats that as "do not run it".
+    if ($script:WorkFolder -and (Test-Path -LiteralPath $script:WorkFolder)) { return $script:WorkFolder }
+    try {
+        $base = [Environment]::GetFolderPath('CommonApplicationData')
+        if (-not $base -or -not (Test-DirectoryTrusted -Path $base)) { throw "$base does not have the permissions Windows ships it with" }
+        $path = Join-Path $base ('winGG-run-{0}' -f [guid]::NewGuid().ToString('N'))
+        New-LockedDirectory -Path $path -Security (New-LockedDirectorySecurity)
+        $script:WorkFolder = $path
+        return $path
+    }
+    catch {
+        Write-Host "  Could not create a private work folder: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $null
+    }
+}
+
+Function Remove-WorkFolder {
+    #Deletes this run's work folder, and any a crashed or stopped run left behind. Only folders
+    #that are still an administrator's and are not junctions are touched. Directory.Delete
+    #removes a reparse point it meets as a link and does not follow it.
+    $base = [Environment]::GetFolderPath('CommonApplicationData')
+    foreach ($d in @(Get-ChildItem -LiteralPath $base -Directory -Filter 'winGG-run-*' -Force -ErrorAction SilentlyContinue)) {
+        if ($d.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+        try {
+            $owner = (Get-Acl -LiteralPath $d.FullName -ErrorAction Stop).GetOwner([Security.Principal.SecurityIdentifier]).Value
+            if ($script:TrustedOwnerSids -contains $owner) { [IO.Directory]::Delete($d.FullName, $true) }
+        }
+        catch { Write-Host "  Could not remove $($d.FullName): $($_.Exception.Message)" -ForegroundColor DarkYellow }
+    }
+    $script:WorkFolder = $null
 }
 
 #FRAGMENT 3: run under Windows PowerShell 5.1, not PowerShell 7.
@@ -1074,7 +1271,7 @@ Function Write-RunSummary {
 If ($PSVersionTable.PSEdition -eq 'Core') {
     Write-Color "This script needs Windows PowerShell 5.1 (the Appx cmdlets do not load in PowerShell 7). Relaunching there. . ." -ForegroundColor Yellow -BackgroundColor Black
     Start-Sleep 1
-    $winPS = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $winPS = $script:WinPSExe
     If (Test-Path $winPS) {
         Start-Process $winPS -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`"" -f $PSCommandPath) -Verb RunAs
         Exit
@@ -1090,7 +1287,9 @@ If (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]:
     Write-Color "You didn't run this script as an Administrator. This script will self elevate to run as an Administrator and continue." -ForegroundColor Red -BackgroundColor Black
     Start-Sleep 1
     Write-Countdown -start 3 -delay 1000
-    Start-Process powershell.exe -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`"" -f $PSCommandPath) -Verb RunAs
+    #Full path, not "powershell.exe": the name is looked up through App Paths and PATH, and the
+    #per-user entries of both are writable without elevation.
+    Start-Process $script:WinPSExe -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`"" -f $PSCommandPath) -Verb RunAs
     Exit
 }
 
@@ -1107,15 +1306,8 @@ $ErrorActionPreference = 'silentlycontinue'
 #each step instead. Keep the feedback, drop the wreckage.
 $ProgressPreference = 'Continue'
 
-$DebloatFolder = "C:\Temp\WindowsDebloat&Optimize"
-If (Test-Path $DebloatFolder) {
-}
-Else {
-    #Write-Host "The folder '$DebloatFolder' doesn't exist. This folder will be used for storing logs created after the script runs. Creating now." -ForegroundColor Yellow 
-    #Start-Sleep 1
-    New-Item -Path "$DebloatFolder" -ItemType Directory | Out-Null
-    #Write-Host "The folder $DebloatFolder was successfully created." -ForegroundColor Green
-}
+#Created and locked down by Initialize-LogFolder - see SECURITY at the top of the logic.
+$DebloatFolder = Initialize-LogFolder -Path "C:\Temp\WindowsDebloat&Optimize"
 
 Add-Type -AssemblyName PresentationCore, PresentationFramework
 
@@ -1144,6 +1336,11 @@ Add-Type -AssemblyName PresentationCore, PresentationFramework
 #
 #  The task is named with a timestamp, registered, started, waited on, and unregistered in a
 #  finally block so it cannot be left behind even if the payload throws.
+#
+#  SECURITY (2026-10-23): the payload is written to this run's private work folder, never to the
+#  log folder. The log folder used to be writable by every signed-in user, so the file this
+#  task runs as SYSTEM could be swapped between being written and being run. No work folder,
+#  no SYSTEM helper.
 #===============================================================================================
 Function Invoke-AsSystem {
     param(
@@ -1151,10 +1348,15 @@ Function Invoke-AsSystem {
         [int]$TimeoutSeconds = 300
     )
 
+    $work = Get-WorkFolder
+    if (-not $work) {
+        Write-Host "  SYSTEM helper skipped: there is no private folder to run it from." -ForegroundColor Yellow
+        return @()
+    }
     $stamp    = Get-Date -Format 'yyyyMMddHHmmssfff'
     $taskName = "w10n11deb-system-$stamp"
-    $payload  = Join-Path $DebloatFolder "systemhelper-$stamp.ps1"
-    $resultF  = Join-Path $DebloatFolder "systemhelper-$stamp.out"
+    $payload  = Join-Path $work "systemhelper-$stamp.ps1"
+    $resultF  = Join-Path $work "systemhelper-$stamp.out"
     $signalled = $false
 
     try {
@@ -1164,7 +1366,7 @@ Function Invoke-AsSystem {
         $footer  = [Environment]::NewLine + "Emit '##SYSTEMHELPER-DONE##'"
         Set-Content -LiteralPath $payload -Value ($header + $Body + $footer) -Encoding UTF8
 
-        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f $payload)
+        $action    = New-ScheduledTaskAction -Execute $script:WinPSExe -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f $payload)
         $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
         $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 
@@ -1755,7 +1957,8 @@ Function SystemOpti {
     #bcdedit errors when the value is not present - the common case on a clean install, and a
     #success for us. Routed through cmd with 2>nul so that expected noise never reaches $Error
     #and never turns a healthy step into a PARTIAL.
-    $null = cmd /c "bcdedit /deletevalue useplatformclock 2>nul"
+    #/d: skip the HKCU Command Processor AutoRun command (see SECURITY at the top of the logic).
+    $null = & $script:CmdExe /d /c "bcdedit /deletevalue useplatformclock 2>nul"
     bcdedit /set disabledynamictick yes
     Write-Color "Clock Sync has been changed. . . " -ForegroundColor Green -BackgroundColor Black
     #Tracking that isn't needed. 
@@ -1899,14 +2102,18 @@ Function GenSysRestorePoint {
     $HadOriginal = $false
     $OriginalVal = $null
 
+    #The drive Windows is on, from the OS rather than $env:SystemDrive (a user variable can
+    #override that one - see SECURITY at the top of the logic).
+    $sysDrive = [IO.Path]::GetPathRoot($script:WinDir).TrimEnd('\')
+
     try {
         #1. System Restore has to be enabled on the system drive or nothing else here matters.
         try {
-            Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction Stop
-            Write-Host "  System Restore is enabled for $env:SystemDrive" -ForegroundColor Green
+            Enable-ComputerRestore -Drive "$sysDrive\" -ErrorAction Stop
+            Write-Host "  System Restore is enabled for $sysDrive" -ForegroundColor Green
         }
         catch {
-            Write-Host "  Could not enable System Restore on $env:SystemDrive - $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "  Could not enable System Restore on $sysDrive - $($_.Exception.Message)" -ForegroundColor Red
         }
 
         #2. Lift the 24h throttle, remembering whether the value was there to begin with so it
@@ -2030,7 +2237,11 @@ Function NagleAlgoDis {
 #  Deliberately NOT included, both wrong trade-offs for a gaming target:
 #    - Controlled Folder Access: blocks unrecognised processes writing to Documents, which
 #      breaks game saves until every title is allowlisted by hand.
-#    - Memory Integrity / HVCI: measurable frame-time cost.
+#    - Memory Integrity / HVCI is not switched ON here: it needs a reboot, it can refuse old
+#      drivers, and its frame-time cost depends on the CPU (small where MBEC/GMET exists -
+#      roughly Intel 7th gen+ and AMD Zen 2+). CORRECTED 2026-10-23: this used to say only
+#      "measurable frame-time cost", which reads as advice to turn it off. Never do that -
+#      Vanguard can require it and FACEIT requires VBS. Show-AntiCheatReadiness reports it.
 #  SmartScreen is left alone on purpose. This script has never disabled it and should not start.
 #===============================================================================================
 
@@ -2135,8 +2346,18 @@ Function HardenCredentialStorage {
     #tools from reading it. Applies on reboot. Note: anything that legitimately injects into LSASS
     #(some enterprise SSO agents, a few smartcard middlewares) will stop working - none of which
     #is typical on a gaming build, but that is the trade being made here.
+    #1, not 2, on purpose (2026-10-23). Where UEFI Secure Boot is available, 1 means "on, WITH a
+    #UEFI lock": the setting is also kept in firmware, so deleting this value does not turn it
+    #off - that takes Microsoft's LSA protected-process opt-out tool. 2 means on without the
+    #lock, and is what a clean Windows 11 22H2+ install uses. The lock is the point: malware
+    #with admin rights cannot switch it off with one registry write. FEATURES.md ADDENDUM 8.
     Set-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' 'RunAsPPL' 1
+    #NTLMv2 only, and refuse LM / NTLMv1 when something signs in to this PC. Windows has only
+    #SENT NTLMv2 by default since Vista, and Windows 11 24H2+ has no NTLMv1 at all, so there this
+    #changes nothing. It is for Windows 10, where an incoming NTLMv1 sign-in still works.
+    Set-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' 'LmCompatibilityLevel' 5
     Write-Host "  WDigest off, LSA Protection armed (takes effect on reboot)." -ForegroundColor Green
+    Write-Host "  NTLMv2 only (LmCompatibilityLevel=5) - a no-op on 24H2+, which has no NTLMv1." -ForegroundColor Green
 }
 
 Function DisablePowerShellV2 {
@@ -2175,7 +2396,8 @@ Function EnableDoH {
         Write-Host "  DoH cmdlets not present on this build - skipping." -ForegroundColor DarkYellow
         return
     }
-    foreach ($ip in '1.1.1.1', '1.0.0.1') {
+    #The IPv6 pair as well, because Set-CloudFlareDNS now sets it on adapters with IPv6.
+    foreach ($ip in '1.1.1.1', '1.0.0.1', '2606:4700:4700::1111', '2606:4700:4700::1001') {
         $existing = Get-DnsClientDohServerAddress -ServerAddress $ip -ErrorAction SilentlyContinue
         if ($existing) {
             Set-DnsClientDohServerAddress -ServerAddress $ip -DohTemplate 'https://cloudflare-dns.com/dns-query' -AllowFallbackToUdp $true -AutoUpgrade $true -ErrorAction SilentlyContinue
@@ -2245,6 +2467,257 @@ Function DisableLegacyRemoteAccess {
     Set-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance' 'fAllowFullControl' 0
     try { Set-Service -Name RemoteRegistry -StartupType Disabled -ErrorAction Stop }
     catch { Write-Host "  RemoteRegistry: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+}
+
+#-----------------------------------------------------------------------------------------------
+#  ADDED 2026-10-23 (security review, FEATURES.md ADDENDUM 8): Defender, the vulnerable driver
+#  blocklist, the firewall and Remote Desktop, and a read-only anti-cheat readiness report.
+#  None of it costs frames or latency, and none of it turns off anything an anti-cheat wants.
+#  TPM, Secure Boot, VBS, Memory Integrity (HVCI) and the IOMMU are only ever READ here.
+#-----------------------------------------------------------------------------------------------
+
+#What the ASR rules below are set to. 'Enabled' blocks; 'AuditMode' only logs, as event 1122 in
+#Event Viewer > Applications and Services Logs > Microsoft > Windows > Windows Defender >
+#Operational (a real block is 1121). Switch to 'AuditMode' for a trial run if a tool you rely on
+#might trip one of them.
+$script:AsrAction = 'Enabled'
+
+#Things a step found that you need to act on but that are not failures of the step itself.
+#Write-RunSummary prints them at the end in red, where they cannot scroll away.
+$script:RunWarnings = @()
+
+Function Test-DefenderActive {
+    #$true only when Microsoft Defender Antivirus is the active antivirus. With another AV
+    #installed, Defender is in passive mode or off, and its settings either do nothing or fail.
+    $s = Invoke-Silently { Get-MpComputerStatus -ErrorAction Stop }
+    if (-not $s -or -not $s.AMServiceEnabled -or -not $s.AntivirusEnabled) { return $false }
+    #AMRunningMode is missing on old Defender platform versions, which predate passive mode.
+    return ($null -eq $s.AMRunningMode -or [string]$s.AMRunningMode -eq 'Normal')
+}
+
+Function HardenDefender {
+    #Potentially unwanted app blocking, plus five attack surface reduction rules picked for real
+    #value and almost no false positives on a home gaming PC. All five work on Home.
+    #  56a863a9-875e-4185-98a7-b882c64b5ce5  abuse of exploited vulnerable signed drivers
+    #  9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2  credential stealing from LSASS
+    #  e6db77e5-3df2-4cf1-b95a-636979351e5b  persistence through WMI event subscription
+    #  b2b3f03d-6a65-4f7b-a9c7-1c7ef74a9ba4  untrusted and unsigned processes that run from USB
+    #  be9ba2d9-53ea-4cdc-84e5-9b1eeee46550  executable content from email client and webmail
+    #Left out on purpose: the "prevalence, age or trusted list" rule (01443614-...) and
+    #Controlled Folder Access - they block unsigned mods, tools and game saves. No exclusions are
+    #added, for games or anything else: an exclusion is a blind spot, and Defender already scans
+    #trusted signed game files cheaply.
+    #An ASR rule you already set yourself (Audit, Warn or Off) is kept. PUA is different - see below.
+    Write-Host "Hardening Microsoft Defender (PUA + 5 ASR rules). . ." -ForegroundColor Yellow
+    if (-not (Test-DefenderActive)) {
+        #Nothing is changed either way, and Defender is never switched back on - but "another
+        #antivirus is in charge" and "nothing is" are very different, so tell them apart.
+        #Windows Security keeps the list of registered antivirus products. Bit 12 of productState
+        #is the on/off flag (not formally documented, but stable since Windows 7). Defender is in
+        #that list too, so it is filtered out.
+        $wsc = Invoke-Silently { [pscustomobject]@{ List = @(Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName AntiVirusProduct -ErrorAction Stop) } }
+        $on     = @(if ($wsc) { $wsc.List | Where-Object { ([int64]$_.productState -shr 12) -band 1 } })
+        $others = @($on | Where-Object { $_.displayName -notmatch 'Windows Defender|Microsoft Defender' })
+        if ($others.Count) {
+            Write-Host "  $($others[0].displayName) is your active antivirus - Defender skipped, nothing changed." -ForegroundColor Green
+        }
+        elseif (-not $wsc) {
+            Write-Host "  Microsoft Defender is not active, and Windows Security could not be asked about other antivirus - skipped." -ForegroundColor DarkYellow
+        }
+        elseif ($on.Count) {
+            #Windows Security says Defender is on, but Get-MpComputerStatus did not answer.
+            Write-Host "  Microsoft Defender looks on, but its settings could not be read - skipped." -ForegroundColor DarkYellow
+        }
+        else {
+            $msg = 'NO ACTIVE ANTIVIRUS: Microsoft Defender is off and no other antivirus reports itself on. This script does not turn it back on - Windows Security > Virus & threat protection does.'
+            Write-Host "  $msg" -ForegroundColor Red
+            $script:RunWarnings += $msg
+        }
+        return
+    }
+    $pref = Get-MpPreference -ErrorAction Stop
+
+    #PUA: 0 off, 1 block, 2 audit (detect and log, block nothing).
+    #CHANGED 2026-10-23: anything but 1 is set to block. 2 used to be kept as "your choice", but
+    #it is Microsoft's own default since security intelligence 1.329.495.0, so it cannot be told
+    #apart from never touched - the VM showed 2 and the old rule changed nothing there, or on
+    #almost any up-to-date PC. Read back afterwards: a Group Policy value beats Set-MpPreference.
+    $pua = [int]$pref.PUAProtection
+    if ($pua -ne 1) {
+        try {
+            Set-MpPreference -PUAProtection Enabled -ErrorAction Stop
+            $now = Invoke-Silently { (Get-MpPreference -ErrorAction Stop).PUAProtection }
+            if ([int]$now -eq 1) {
+                Write-Host "  Potentially unwanted app blocking on (was $pua - 0 off, 2 audit only)." -ForegroundColor Green
+            }
+            else {
+                Write-Host "  Potentially unwanted app blocking did not stick (still reads '$now') - a Group Policy setting probably overrides it." -ForegroundColor DarkYellow
+            }
+        }
+        catch { Write-Host "  PUA protection: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+    }
+    else { Write-Host "  Potentially unwanted app blocking already on - kept." -ForegroundColor Green }
+
+    $rules = @(
+        '56a863a9-875e-4185-98a7-b882c64b5ce5'
+        '9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2'
+        'e6db77e5-3df2-4cf1-b95a-636979351e5b'
+        'b2b3f03d-6a65-4f7b-a9c7-1c7ef74a9ba4'
+        'be9ba2d9-53ea-4cdc-84e5-9b1eeee46550'
+    )
+    $have = @($pref.AttackSurfaceReductionRules_Ids | ForEach-Object { ([string]$_).ToLowerInvariant() })
+    $add  = @($rules | Where-Object { $have -notcontains $_ })
+    if ($rules.Count -gt $add.Count) {
+        Write-Host "  $($rules.Count - $add.Count) of the 5 ASR rules were already configured - kept as they are." -ForegroundColor Green
+    }
+    if ($add.Count) {
+        #Add-, never Set-MpPreference: Set replaces the whole rule list, which would wipe any
+        #rule you or another tool had added.
+        try {
+            Add-MpPreference -AttackSurfaceReductionRules_Ids $add `
+                -AttackSurfaceReductionRules_Actions (@($script:AsrAction) * $add.Count) -ErrorAction Stop
+            Write-Host "  $($add.Count) ASR rule(s) set to $script:AsrAction." -ForegroundColor Green
+        }
+        catch { Write-Host "  ASR rules: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+    }
+}
+
+Function EnableDriverBlocklist {
+    #Microsoft's vulnerable driver blocklist: signed drivers with known holes that malware and
+    #cheats load to get into the kernel ("bring your own vulnerable driver"). On by default on
+    #Windows 11 22H2+, but upgrades and some tweak tools leave it off. Memory Integrity enforces
+    #it regardless. Takes effect after a reboot.
+    #SIDE EFFECT: an old fan, RGB or overclocking tool built on a listed driver version (old
+    #RTCore64, WinRing0) can no longer load it. Defender already quarantines WinRing0 by itself,
+    #and current versions of the big tools ship fixed drivers. To undo it: Windows Security >
+    #Device security > Core isolation details > Microsoft Vulnerable Driver Blocklist.
+    Write-Host "Checking the Microsoft vulnerable driver blocklist. . ." -ForegroundColor Yellow
+    $ci  = 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Config'
+    $cur = Invoke-Silently { (Get-ItemProperty -LiteralPath $ci -Name VulnerableDriverBlocklistEnable -ErrorAction Stop).VulnerableDriverBlocklistEnable }
+    if ($cur -eq 1) {
+        Write-Host "  Already on." -ForegroundColor Green
+        return
+    }
+    $build = [int](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name CurrentBuild).CurrentBuild
+    #Not set on 22H2+ means on by default, so writing 1 changes nothing that loads today.
+    $wasOff = ($cur -eq 0) -or ($null -eq $cur -and $build -lt 22621)
+    Set-RegValue $ci 'VulnerableDriverBlocklistEnable' 1
+    $now = Invoke-Silently { (Get-ItemProperty -LiteralPath $ci -Name VulnerableDriverBlocklistEnable -ErrorAction Stop).VulnerableDriverBlocklistEnable }
+    if ($now -ne 1) { throw "Could not turn the vulnerable driver blocklist on." }
+    if ($wasOff) {
+        Write-Host "  Turned ON (it was off). Takes effect after the reboot." -ForegroundColor Green
+        Write-Host "  If an old fan / RGB / overclocking tool stops working after that, update it first." -ForegroundColor DarkYellow
+    }
+    else { Write-Host "  On (it was the Windows default already; now set explicitly)." -ForegroundColor Green }
+}
+
+Function CheckFirewallAndRdp {
+    #Some "optimizers" switch the Windows firewall off. A profile is turned back on only if it is
+    #off AND no other firewall is registered with Windows Security - two firewalls at once cause
+    #their own problems. An inbound default of Allow goes back to Block.
+    #Remote Desktop is NOT switched off: this script cannot tell whether you reach this PC with
+    #it, and locking you out of a remote machine is worse than the risk. If it is on, it is made
+    #to require Network Level Authentication, so nobody gets a sign-in screen without valid
+    #credentials first. Parsec, Moonlight, Sunshine and Steam Link do not use RDP.
+    Write-Host "Checking the firewall and Remote Desktop. . ." -ForegroundColor Yellow
+    $other = @(Invoke-Silently { Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName FirewallProduct -ErrorAction Stop })
+    foreach ($p in @(Get-NetFirewallProfile -PolicyStore ActiveStore -ErrorAction Stop)) {
+        $on = [string]$p.Enabled -ne 'False'
+        if (-not $on -and $other.Count) {
+            Write-Host "  $($p.Name) profile: Windows firewall off, $($other[0].displayName) is in charge - left alone." -ForegroundColor DarkYellow
+            continue
+        }
+        if (-not $on) {
+            Set-NetFirewallProfile -Name $p.Name -Enabled True -ErrorAction Stop
+            Write-Host "  $($p.Name) profile: firewall was OFF - turned back on." -ForegroundColor Green
+        }
+        if ([string]$p.DefaultInboundAction -eq 'Allow') {
+            Set-NetFirewallProfile -Name $p.Name -DefaultInboundAction Block -ErrorAction Stop
+            Write-Host "  $($p.Name) profile: inbound default was Allow - now Block." -ForegroundColor Green
+        }
+        elseif ($on) { Write-Host "  $($p.Name) profile: on, inbound blocked by default." -ForegroundColor Green }
+    }
+
+    $ts   = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
+    $deny = Invoke-Silently { (Get-ItemProperty -LiteralPath $ts -Name fDenyTSConnections -ErrorAction Stop).fDenyTSConnections }
+    if ($deny -eq 0) {
+        Set-RegValue "$ts\WinStations\RDP-Tcp" 'UserAuthentication' 1
+        Write-Host "  Remote Desktop is ON - it now requires Network Level Authentication." -ForegroundColor Yellow
+        Write-Host "  If you never use it: Settings > System > Remote Desktop > Off." -ForegroundColor Yellow
+    }
+    else { Write-Host "  Remote Desktop is off." -ForegroundColor Green }
+}
+
+#Filled by Show-AntiCheatReadiness, printed again by Write-RunSummary.
+$script:AntiCheatReport = @()
+
+Function Show-AntiCheatReadiness {
+    #READ-ONLY. What the kernel anti-cheats look at, so you find out here rather than from a game
+    #that refuses to start. Checked on the vendors' pages 2026-10-23:
+    #  Vanguard (Valorant, LoL)  may require TPM 2.0, Secure Boot, Memory Integrity and IOMMU,
+    #                            decided per machine
+    #  FACEIT                    TPM 2.0, Secure Boot, IOMMU with VBS, Windows 11 (from 2026-10-14)
+    #  Javelin (BF6), Ricochet (BO7)  Secure Boot and TPM 2.0
+    #  EAC, BattlEye             no hard requirement; both refuse test-signing and kernel debugging
+    #All of these are firmware or Windows settings this script never changes. A line marked OFF is
+    #something to switch on in the BIOS or in Windows Security, not a fault in this run.
+    Write-Host "Checking anti-cheat readiness (read-only). . ." -ForegroundColor Yellow
+    $report = New-Object System.Collections.Generic.List[object]
+    function Add-Line([object]$Ok, [string]$Text) { $report.Add([pscustomobject]@{ Ok = $Ok; Text = $Text }) }
+
+    $build = [int](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name CurrentBuild).CurrentBuild
+    if ($build -ge 22000) { Add-Line $true "Windows 11 (build $build)" }
+    else                  { Add-Line $false "Windows 10 (build $build) - FACEIT needs Windows 11 since 2026-10-14" }
+
+    $tpm  = Invoke-Silently { Get-Tpm -ErrorAction Stop }
+    $spec = [string](Invoke-Silently { (Get-CimInstance -Namespace 'root/cimv2/Security/MicrosoftTpm' -ClassName Win32_Tpm -ErrorAction Stop).SpecVersion })
+    if (-not $tpm)               { Add-Line $null  "TPM - could not be read" }
+    elseif (-not $tpm.TpmPresent) { Add-Line $false "TPM - none found (enable fTPM / PTT in the BIOS) - Vanguard, FACEIT, BF6, BO7" }
+    elseif (-not $spec)          { Add-Line $null  "TPM present, but its version could not be read" }
+    elseif ($spec -notmatch '^\s*2\.0') { Add-Line $false "TPM present but not 2.0 ($spec) - Vanguard, FACEIT, BF6, BO7" }
+    elseif (-not $tpm.TpmReady)  { Add-Line $false "TPM 2.0 present but not ready - see Windows Security > Device security" }
+    else                         { Add-Line $true  "TPM 2.0 ready" }
+
+    #$true / $false, or $null when the firmware is not UEFI (the cmdlet throws there).
+    $sb = Invoke-Silently { Confirm-SecureBootUEFI -ErrorAction Stop }
+    if ($sb -eq $true)      { Add-Line $true  "Secure Boot on" }
+    elseif ($sb -eq $false) { Add-Line $false "Secure Boot OFF (switch it on in the BIOS) - Vanguard, FACEIT, BF6, BO7" }
+    else                    { Add-Line $false "Secure Boot unavailable (legacy BIOS / CSM boot?) - Vanguard, FACEIT, BF6, BO7" }
+
+    $running = @()
+    $dg = Invoke-Silently { Get-CimInstance -Namespace 'root/Microsoft/Windows/DeviceGuard' -ClassName Win32_DeviceGuard -ErrorAction Stop }
+    if ($dg) {
+        $running = @($dg.SecurityServicesRunning | ForEach-Object { [int]$_ })
+        $avail   = @($dg.AvailableSecurityProperties | ForEach-Object { [int]$_ })
+        if ([int]$dg.VirtualizationBasedSecurityStatus -eq 2) { Add-Line $true "Virtualization-based security running" }
+        else { Add-Line $false "Virtualization-based security not running - FACEIT, maybe Vanguard" }
+        if ($running -contains 2) { Add-Line $true "Memory Integrity (HVCI) running" }
+        else { Add-Line $false "Memory Integrity (HVCI) off - Vanguard may ask for it (Windows Security > Core isolation)" }
+        #3 = DMA protection, which Windows only reports when an IOMMU (VT-d / AMD-Vi) is enabled.
+        if ($avail -contains 3) { Add-Line $true "IOMMU / DMA protection available" }
+        else { Add-Line $false "IOMMU not reported (enable VT-d / AMD-Vi / IOMMU in the BIOS) - FACEIT, maybe Vanguard" }
+    }
+    else { Add-Line $null "VBS / Memory Integrity / IOMMU - could not be read" }
+
+    $blk = Invoke-Silently { (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Config' -Name VulnerableDriverBlocklistEnable -ErrorAction Stop).VulnerableDriverBlocklistEnable }
+    #Not set means on from Windows 11 22H2, off before it. Memory Integrity enforces it anyway.
+    if ($blk -eq 1 -or ($null -eq $blk -and $build -ge 22621) -or $running -contains 2) { Add-Line $true "Vulnerable driver blocklist on" }
+    else { Add-Line $false "Vulnerable driver blocklist off" }
+
+    #The options the CURRENT boot started with. Language-neutral, unlike bcdedit's Yes/No.
+    $opts = [string](Invoke-Silently { (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control' -Name SystemStartOptions -ErrorAction Stop).SystemStartOptions })
+    $bad  = @(foreach ($f in 'TESTSIGNING', 'DEBUG', 'DISABLE_INTEGRITY_CHECKS') { if ($opts -match "(^|\s)$f(\s|=|$)") { $f } })
+    if ($bad.Count) { Add-Line $false ("Boot options {0} - every kernel anti-cheat refuses these (bcdedit)" -f ($bad -join ', ')) }
+    else            { Add-Line $true  "No test-signing, kernel debug or integrity-check bypass at boot" }
+
+    $script:AntiCheatReport = $report.ToArray()
+    foreach ($r in $script:AntiCheatReport) { Write-ReadinessLine $r }
+}
+
+Function Write-ReadinessLine {
+    param([Parameter(Mandatory)]$Line)
+    $tag, $colour = if ($Line.Ok -eq $true) { '[ ok  ]', 'Green' } elseif ($Line.Ok -eq $false) { '[ OFF ]', 'Yellow' } else { '[  ?  ]', 'DarkGray' }
+    Write-Host ("  {0} {1}" -f $tag, $Line.Text) -ForegroundColor $colour
 }
 
 Function DisableTelemetryExtras {
@@ -2348,7 +2821,7 @@ Function SetVisualEffectsPerformance {
 Function BlocklistMNNSSM {
     #Line 16338 is end of the blocklist
     #This function edits the system hostfile with Dan Pollocks BlockList as well as a few extra entries.
-    $hostsloc = "C:\Windows\System32\Drivers\Etc\hosts"
+    $hostsloc = Join-Path $script:WinDir 'System32\drivers\etc\hosts'
     Write-Host "Grabbing hosts file" -ForegroundColor Yellow 
 
 	    
@@ -2431,11 +2904,18 @@ Function BlocklistMNNSSM {
     }
     catch { }
 
-    #2. Stage the new content in a temp file first, so a failure never leaves hosts empty.
+    #2. Stage the new content first, so a failure never leaves hosts empty.
     #   UTF8 *without* BOM: a BOM can confuse the resolver, and plain ASCII would mangle the
     #   contributor names in Dan Pollock's credits block.
-    $hostsTemp = Join-Path $env:TEMP ("hosts.staged.{0}" -f [guid]::NewGuid().ToString('N'))
+    #   CHANGED 2026-10-23: staged NEXT TO hosts in drivers\etc, not in %TEMP%. Only admins and
+    #   SYSTEM can write drivers\etc, so nothing else can swap the staged file between the check
+    #   below and the swap. Same folder also means same volume, which [IO.File]::Replace needs.
+    $etcDir     = Split-Path -Parent $hostsloc
+    $hostsTemp  = Join-Path $etcDir 'hosts.winGG.staged'
+    $hostsPrev  = Join-Path $etcDir 'hosts.winGG.previous'
+    $wasReadOnly = $false
     try {
+        if (Test-Path -LiteralPath $hostsTemp) { Remove-Item -LiteralPath $hostsTemp -Force -ErrorAction Stop }
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
         [System.IO.File]::WriteAllText($hostsTemp, $MNNSSMBlocklist, $utf8NoBom)
 
@@ -2447,22 +2927,47 @@ Function BlocklistMNNSSM {
         }
 
         #4. Swap it in. Only now does the real hosts file change.
-        Copy-Item -LiteralPath $hostsTemp -Destination $hostsloc -Force -ErrorAction Stop
+        #   CHANGED 2026-10-23: [IO.File]::Replace is one rename on the same volume, and it keeps
+        #   the hosts file's own permissions. The old Copy-Item rewrote hosts in place, so a crash
+        #   part-way left a half-written file. The old hosts file becomes hosts.winGG.previous,
+        #   which also lives in drivers\etc - the restore below reads only admin-only files.
+        #   A read-only hosts file is a choice some people make, so it stays read-only afterwards.
+        if (Test-Path -LiteralPath $hostsPrev) { Remove-Item -LiteralPath $hostsPrev -Force -ErrorAction Stop }
+        $hostsItem = Get-Item -LiteralPath $hostsloc -Force -ErrorAction Stop
+        if ($hostsItem.IsReadOnly) { $wasReadOnly = $true; $hostsItem.IsReadOnly = $false }
+        $swapped = Invoke-Silently -AsBool { [System.IO.File]::Replace($hostsTemp, $hostsloc, $hostsPrev) }
+        if (-not $swapped) {
+            if (-not (Test-Path -LiteralPath $hostsloc)) { throw "The swap failed and the hosts file is missing." }
+            #Replace can fail when something holds hosts open. Fall back to the old copy.
+            Write-Host "  Atomic swap failed - copying instead." -ForegroundColor DarkYellow
+            Copy-Item -LiteralPath $hostsloc -Destination $hostsPrev -Force -ErrorAction Stop
+            Copy-Item -LiteralPath $hostsTemp -Destination $hostsloc -Force -ErrorAction Stop
+        }
         Write-Host "hosts file updated with $stagedHosts blocklist entries." -ForegroundColor Green
+        Write-Host "  The previous hosts file is at $hostsPrev" -ForegroundColor Green
     }
     catch {
         Write-Host "Error while editing the hosts file: $_" -ForegroundColor Red
-        #Put the original back if we got far enough to disturb it.
-        try {
-            Copy-Item -LiteralPath $hostsBackup -Destination $hostsloc -Force -ErrorAction Stop
-            Write-Host "Your original hosts file has been restored from the backup." -ForegroundColor Yellow
-        }
-        catch {
-            Write-Host "COULD NOT RESTORE the hosts file. Your backup is safe at: $hostsBackup" -ForegroundColor Red
+        #Put the original back only if the swap got far enough to remove it. If hosts is still
+        #there, it was never touched (or the copy above failed before it changed anything).
+        if (-not (Test-Path -LiteralPath $hostsloc)) {
+            try {
+                Copy-Item -LiteralPath $hostsPrev -Destination $hostsloc -Force -ErrorAction Stop
+                Write-Host "Your original hosts file has been restored." -ForegroundColor Yellow
+            }
+            catch {
+                Write-Host "COULD NOT RESTORE the hosts file. Copies are at: $hostsPrev and $hostsBackup" -ForegroundColor Red
+            }
         }
     }
     finally {
-        Remove-Item -LiteralPath $hostsTemp -Force -ErrorAction SilentlyContinue
+        if ($wasReadOnly -and (Test-Path -LiteralPath $hostsloc)) {
+            try { (Get-Item -LiteralPath $hostsloc -Force).IsReadOnly = $true }
+            catch { Write-Host "  Could not set the hosts file back to read-only: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+        }
+        #Guarded: after a good swap the staged file is gone, and a Remove-Item on a missing path
+        #lands in $Error even when silenced, which would mark this step PARTIAL.
+        if (Test-Path -LiteralPath $hostsTemp) { Remove-Item -LiteralPath $hostsTemp -Force -ErrorAction SilentlyContinue }
     }
 }
 
@@ -2502,6 +3007,29 @@ Function AeroShakeDisable {
 #a full netsh backup first, saves and re-applies statically configured DNS servers around the
 #reset, logs every step, and has a /verify mode for after the reboot.
 
+Function Write-BatFile {
+    #ADDED 2026-10-23: the one writer for every embedded .bat, so the Desktop copies and the copy
+    #NetResetReboot runs are always the same bytes.
+    #cmd.exe is genuinely fragile about line endings - LF-only batch files break
+    #goto/label parsing - so force CRLF regardless of how this .ps1 is stored.
+    #All three tools are pure ASCII, so ASCII encoding is lossless and safest for cmd.
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Content
+    )
+    #This runs elevated and writes into folders the signed-in user owns. If the target is a link,
+    #delete the link itself (never what it points at), so the write cannot be steered elsewhere.
+    #GetAttributes reads the link, not its target, so a link to a missing file is caught too -
+    #Test-Path calls that "not there", and the write would then create whatever it points at.
+    #Invoke-Silently: "no such file" is the normal first-run answer, not a failure.
+    $attr = Invoke-Silently { [IO.File]::GetAttributes($Path) }
+    if ($null -ne $attr -and ($attr -band [IO.FileAttributes]::ReparsePoint)) {
+        [IO.File]::Delete($Path)
+    }
+    $Body = $Content -replace "`r?`n", "`r`n"
+    [System.IO.File]::WriteAllText($Path, $Body, [System.Text.Encoding]::ASCII)
+}
+
 Function Build-DesktopTools {
     #Writes the three .bat tools to the Desktop and creates God Mode.
     #The tool contents live in the EMBEDDED DATA region near the bottom of this file.
@@ -2527,11 +3055,7 @@ Function Build-DesktopTools {
 
         $Existed = Test-Path -LiteralPath $Target
         try {
-            #cmd.exe is genuinely fragile about line endings - LF-only batch files break
-            #goto/label parsing - so force CRLF regardless of how this .ps1 is stored.
-            #All three tools are pure ASCII, so ASCII encoding is lossless and safest for cmd.
-            $Body = $Tool.Content -replace "`r?`n", "`r`n"
-            [System.IO.File]::WriteAllText($Target, $Body, [System.Text.Encoding]::ASCII)
+            Write-BatFile -Path $Target -Content $Tool.Content
             $Verb = if ($Existed) { 'Updated' } else { 'Created' }
             Write-Host "  $Verb $($Tool.Name)" -ForegroundColor Green
         }
@@ -2557,7 +3081,13 @@ Function Build-DesktopTools {
 }
 
 Function NetResetReboot {
-    #Runs the net-reset-reboot.bat that Build-DesktopTools just wrote to the Desktop.
+    #Runs net-reset-reboot.bat - the same bytes Build-DesktopTools wrote to the Desktop.
+    #
+    #CHANGED 2026-10-23: it runs a private copy in the work folder, NOT the Desktop copy. The
+    #Desktop belongs to the signed-in user (and OneDrive often syncs it), so anything running as
+    #that user could edit the .bat after Build-DesktopTools wrote it and before this step ran it
+    #as admin - a free UAC bypass. The work folder only admins and SYSTEM can write. The logs are
+    #copied to Desktop\netreset-logs afterwards, which is where the Desktop copy's /verify looks.
     #
     #The two flags matter:
     #  /y     skip the "are you sure" prompt AND the trailing pause, so it runs unattended
@@ -2569,16 +3099,47 @@ Function NetResetReboot {
     #reboot stays where it belongs - the prompt at the very end, which the user chooses.
     #
     #Passing any argument at all also suppresses the .bat's own double-click menu.
-    $Desktop = [Environment]::GetFolderPath('Desktop')
-    $Bat     = Join-Path $Desktop 'net-reset-reboot.bat'
-
-    if (-not (Test-Path -LiteralPath $Bat)) {
-        throw "net-reset-reboot.bat is not on the Desktop - Build-DesktopTools must run first."
+    if ([string]::IsNullOrWhiteSpace($script:NetResetRebootBat)) {
+        throw "The embedded net-reset-reboot.bat is missing, so the network reset was skipped."
     }
+    $work = Get-WorkFolder
+    if (-not $work) {
+        throw "There is no private folder to run net-reset-reboot.bat from, so the network reset was skipped."
+    }
+    $Bat = Join-Path $work 'net-reset-reboot.bat'
+    Write-BatFile -Path $Bat -Content $script:NetResetRebootBat
 
     Write-Host "Running net-reset-reboot.bat /y /none (no reboot - that is saved for the end)" -ForegroundColor Yellow
-    & $env:ComSpec /c "`"$Bat`" /y /none"
+    & $script:CmdExe /d /c "`"$Bat`" /y /none"
     $code = $LASTEXITCODE
+
+    #Copy the logs out whatever the exit code - they matter most when it failed. The work
+    #folder is deleted when the script ends.
+    $logSrc  = Join-Path $work 'netreset-logs'
+    $Desktop = [Environment]::GetFolderPath('Desktop')
+    $logDst  = if ($Desktop) { Join-Path $Desktop 'netreset-logs' } else { $null }
+    if ($logDst -and (Test-Path -LiteralPath $logSrc)) {
+        try {
+            $dstAttr = Invoke-Silently { [IO.File]::GetAttributes($logDst) }
+            if ($null -ne $dstAttr -and ($dstAttr -band [IO.FileAttributes]::ReparsePoint)) {
+                throw "$logDst is a link, not a folder"
+            }
+            if ($null -eq $dstAttr) { [void][IO.Directory]::CreateDirectory($logDst) }
+            #The folder is yours, so a file already in it with the same name could be a link.
+            #Copying onto a link writes wherever it points, so a link is deleted first.
+            foreach ($f in @(Get-ChildItem -LiteralPath $logSrc -File -ErrorAction Stop)) {
+                $to = Join-Path $logDst $f.Name
+                $toAttr = Invoke-Silently { [IO.File]::GetAttributes($to) }
+                if ($null -ne $toAttr -and ($toAttr -band [IO.FileAttributes]::ReparsePoint)) { [IO.File]::Delete($to) }
+                Copy-Item -LiteralPath $f.FullName -Destination $to -Force -ErrorAction Stop
+            }
+            Write-Host "  Logs copied to $logDst" -ForegroundColor Green
+        }
+        catch {
+            Write-Host "  Could not copy the logs to the Desktop: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "  They are in $logSrc until this script finishes." -ForegroundColor Yellow
+        }
+    }
 
     if ($code -ne 0) {
         throw "net-reset-reboot.bat exited with code $code - check the netreset-logs folder on your Desktop."
@@ -2604,7 +3165,8 @@ Function Set-CloudFlareDNS {
     #adapter breaks VM NAT/host-only networking. -Physical excludes VMware, Hyper-V,
     #VirtualBox and VPN adapters, so only real hardware gets touched.
     #
-    #The DNS servers themselves are unchanged: CloudFlare 1.1.1.1 / 1.0.0.1, IPv4.
+    #The DNS servers themselves are unchanged: CloudFlare 1.1.1.1 / 1.0.0.1, plus the IPv6 pair
+    #2606:4700:4700::1111 / ::1001 on adapters with a global IPv6 address (2026-10-23).
     $Adapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
                   Where-Object { $_.Status -eq 'Up' })
 
@@ -2630,10 +3192,27 @@ Function Set-CloudFlareDNS {
     }
 
     foreach ($Adapter in $Adapters) {
+        #ADDED 2026-10-23: IPv6 as well, on any adapter that has a global IPv6 address. Setting
+        #IPv4 alone left the router's IPv6 DNS (from RA / DHCPv6) in place next to 1.1.1.1, and
+        #whatever went to it went to the ISP in plain text - DNS over HTTPS never saw it. Not
+        #added without a global IPv6 address: a DNS server the adapter cannot reach only adds
+        #timeouts. Any IPv6 DNS left on such an adapter is printed so it is not a surprise.
+        $servers = @('1.1.1.1', '1.0.0.1')
+        $global6 = @(Invoke-Silently { Get-NetIPAddress -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv6 -ErrorAction Stop } |
+                     Where-Object { $_.IPAddress -match '^[23][0-9a-fA-F]{0,3}:' -and [string]$_.AddressState -eq 'Preferred' })
+        if ($global6.Count) { $servers += '2606:4700:4700::1111', '2606:4700:4700::1001' }
         try {
             Set-DnsClientServerAddress -InterfaceIndex $Adapter.ifIndex `
-                -ServerAddresses "1.1.1.1", "1.0.0.1" -ErrorAction Stop
-            Write-Host "  $($Adapter.Name) -> 1.1.1.1 / 1.0.0.1  [$($Adapter.InterfaceDescription)]" -ForegroundColor Green
+                -ServerAddresses $servers -ErrorAction Stop
+            if ($global6.Count) {
+                Write-Host "  $($Adapter.Name) -> 1.1.1.1 / 1.0.0.1 + 2606:4700:4700::1111 / ::1001  [$($Adapter.InterfaceDescription)]" -ForegroundColor Green
+            }
+            else {
+                Write-Host "  $($Adapter.Name) -> 1.1.1.1 / 1.0.0.1  [$($Adapter.InterfaceDescription)] - no global IPv6, IPv4 only" -ForegroundColor Green
+                $left6 = @(Invoke-Silently { (Get-DnsClientServerAddress -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv6 -ErrorAction Stop).ServerAddresses } |
+                           Where-Object { $_ -and $_ -notmatch '^fec0:0:0:ffff::' })
+                if ($left6.Count) { Write-Host "      IPv6 DNS still set on it: $($left6 -join ', ')" -ForegroundColor DarkYellow }
+            }
         }
         catch {
             Write-Host "  $($Adapter.Name) - failed: $($_.Exception.Message)" -ForegroundColor Red
@@ -3007,7 +3586,7 @@ Function HIGHPOWA {
     }
     else {
         Write-Host "  Ultimate Performance not present - creating it once." -ForegroundColor Yellow
-        $null = cmd /c "powercfg -duplicatescheme $ultimateTemplate 2>nul"
+        $null = & $script:CmdExe /d /c "powercfg -duplicatescheme $ultimateTemplate 2>nul"
         Start-Sleep -Milliseconds 500
         $after = Get-SchemeGuids
         #Whatever GUID appeared is the new scheme. No name matching, no locale assumption.
@@ -3045,18 +3624,18 @@ Function OptimizeLinkAndInputPower {
     #one on the device you touch most.
     $usbSub  = '2a737441-1930-4402-8d77-b2bebba308a3'
     $usbSel  = '48e6b7a6-50f5-4782-a5d4-53bb8f07e226'
-    $null = cmd /c "powercfg /setacvalueindex SCHEME_CURRENT $usbSub $usbSel 0 2>nul"
-    $null = cmd /c "powercfg /setdcvalueindex SCHEME_CURRENT $usbSub $usbSel 0 2>nul"
+    $null = & $script:CmdExe /d /c "powercfg /setacvalueindex SCHEME_CURRENT $usbSub $usbSel 0 2>nul"
+    $null = & $script:CmdExe /d /c "powercfg /setdcvalueindex SCHEME_CURRENT $usbSub $usbSel 0 2>nul"
 
     #PCIe Active State Power Management: lets the link to the GPU and NIC drop into low-power
     #states. Waking costs microseconds each time, and it happens constantly.
     $pciSub  = '501a4d13-42af-4429-9fd1-a8218c268e20'
     $aspm    = 'ee12f906-d277-404b-b6da-e5fa1a576df5'
-    $null = cmd /c "powercfg /setacvalueindex SCHEME_CURRENT $pciSub $aspm 0 2>nul"
-    $null = cmd /c "powercfg /setdcvalueindex SCHEME_CURRENT $pciSub $aspm 0 2>nul"
+    $null = & $script:CmdExe /d /c "powercfg /setacvalueindex SCHEME_CURRENT $pciSub $aspm 0 2>nul"
+    $null = & $script:CmdExe /d /c "powercfg /setdcvalueindex SCHEME_CURRENT $pciSub $aspm 0 2>nul"
 
     #The plan has to be re-activated for index changes to take effect.
-    $null = cmd /c "powercfg /setactive SCHEME_CURRENT 2>nul"
+    $null = & $script:CmdExe /d /c "powercfg /setactive SCHEME_CURRENT 2>nul"
     Write-Host "  USB selective suspend and PCIe ASPM disabled." -ForegroundColor Green
 
     #"Allow the computer to turn off this device to save power" on the NIC - same class of
@@ -3133,11 +3712,21 @@ $script:HkcuProbeCode = 'foreach ($s in ''Software'', ''Software\Classes'', ''So
 Function Test-HkcuVirtualized {
     #$true when this process sees a different HKCU than a process started fresh by WMI, $false
     #when they match, $null when the comparison could not be made.
-    #The probe writes into the log folder rather than %TEMP%: an MSIX app can redirect AppData,
+    #The probe writes under the log folder rather than %TEMP%: an MSIX app can redirect AppData,
     #and C:\Temp is outside anything it virtualizes.
-    $out = Join-Path $DebloatFolder ('hkcu-probe-{0}.txt' -f [guid]::NewGuid())
+    #CHANGED 2026-10-23: into a fresh subfolder of its own. The log folder is now admin-only, and
+    #the WMI-started process is not guaranteed to be elevated, so this one subfolder also lets
+    #the current user write. It is deleted below, and nothing is ever run from it. powershell.exe
+    #by full path, so a writable folder early in PATH cannot answer for it.
+    $probeDir = Join-Path $DebloatFolder ('hkcu-probe-{0}' -f [guid]::NewGuid().ToString('N'))
+    try {
+        $meSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        New-LockedDirectory -Path $probeDir -Security (New-LockedDirectorySecurity -ModifySids $meSid)
+    }
+    catch { return $null }
+    $out = Join-Path $probeDir 'probe.txt'
     $q   = $out -replace "'", "''"
-    $cmd = "powershell.exe -NoProfile -NonInteractive -Command ""@($script:HkcuProbeCode) -join [char]10 | Set-Content -LiteralPath '$q.tmp' -Encoding UTF8; Move-Item -LiteralPath '$q.tmp' -Destination '$q'"""
+    $cmd = """$script:WinPSExe"" -NoProfile -NonInteractive -Command ""@($script:HkcuProbeCode) -join [char]10 | Set-Content -LiteralPath '$q.tmp' -Encoding UTF8; Move-Item -LiteralPath '$q.tmp' -Destination '$q'"""
     try {
         $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd } -ErrorAction Stop
         if ($r.ReturnValue -ne 0) { return $null }
@@ -3148,7 +3737,7 @@ Function Test-HkcuVirtualized {
         return ($theirs -ne $mine)
     }
     catch { return $null }
-    finally { Remove-Item -LiteralPath $out, "$out.tmp" -Force -ErrorAction SilentlyContinue }
+    finally { Remove-Item -LiteralPath $probeDir -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 Function Get-DesktopUserSid {
@@ -3191,6 +3780,7 @@ Function Confirm-RealUserHive {
     catch { $answer = $null }
     if ($answer -ne 'yes') {
         Write-Host "  Stopped. No system changes were made." -ForegroundColor Yellow
+        Remove-WorkFolder
         Start-Sleep 3
         exit 1
     }
@@ -3616,6 +4206,11 @@ Function EnableBuiltinAdmin {
     #    is fully elevated without a prompt;
     #  - Store / UWP apps (the Xbox app and Game Pass among them) typically refuse to open
     #    under it. Your own account is already an administrator through UAC.
+    #CHANGED 2026-10-23: when this enables it, it also turns on Admin Approval Mode for it
+    #(FilterAdministratorToken=1, the "UAC: Admin Approval Mode for the Built-in Administrator
+    #account" policy). Then it gets UAC prompts like any other admin, and that same setting is
+    #the documented fix for Store apps refusing to open under it. Nothing else changes for your
+    #own account. An account that is already enabled is still left exactly as it is.
     #Blank answer, no console, or two mismatched entries three times = skipped, account left
     #as it was. The password is read as a SecureString and never echoed or logged; the run
     #transcript only records the prompt.
@@ -3629,9 +4224,9 @@ Function EnableBuiltinAdmin {
         Write-Host "  '$($admin.Name)' is already enabled - left exactly as it is." -ForegroundColor Green
         return
     }
-    Write-Host "  This enables '$($admin.Name)', the built-in Administrator. It runs EVERYTHING fully" -ForegroundColor DarkGray
-    Write-Host "  elevated with no UAC prompt, and Store apps (Xbox, Game Pass) may refuse to open" -ForegroundColor DarkGray
-    Write-Host "  under it. Your own account is already an admin. A password is required." -ForegroundColor DarkGray
+    Write-Host "  This enables '$($admin.Name)', the built-in Administrator. It ships with no password and" -ForegroundColor DarkGray
+    Write-Host "  no UAC prompts. This step sets a password and turns UAC prompts on for it (which also" -ForegroundColor DarkGray
+    Write-Host "  lets Store apps such as Xbox open under it). Your own account is already an admin." -ForegroundColor DarkGray
 
     $pw = $null
     for ($try = 1; $try -le 3; $try++) {
@@ -3656,9 +4251,17 @@ Function EnableBuiltinAdmin {
             Write-Host "  Password refused: $($_.Exception.Message) - '$($admin.Name)' stays disabled." -ForegroundColor DarkYellow
             return
         }
+        #UAC for RID 500 BEFORE it is enabled, so it is never usable without it. Takes effect at its
+        #first sign-in, because the setting is read when the sign-in token is made.
+        $sysPol = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+        Set-RegValue $sysPol 'FilterAdministratorToken' 1
+        if ((Get-ItemProperty -LiteralPath $sysPol -Name FilterAdministratorToken -ErrorAction SilentlyContinue).FilterAdministratorToken -ne 1) {
+            Write-Host "  Could not turn on UAC for '$($admin.Name)' - it stays disabled." -ForegroundColor DarkYellow
+            return
+        }
         try {
             Enable-LocalUser -SID $admin.SID -ErrorAction Stop
-            Write-Host "  '$($admin.Name)' enabled with the password you set." -ForegroundColor Green
+            Write-Host "  '$($admin.Name)' enabled with the password you set, with UAC prompts on." -ForegroundColor Green
             Write-Host "  To turn it off again, from an admin terminal:  Disable-LocalUser -SID $($admin.SID.Value)" -ForegroundColor DarkGray
         }
         catch { Write-Host "  Password set, but the account could not be enabled: $($_.Exception.Message)" -ForegroundColor DarkYellow }
@@ -3755,7 +4358,10 @@ Function AddContextMenuTools {
         -Icon 'imageres.dll,-78' -LuaShield -Command $ownDir
 
     #Unblock a downloaded file (drops its Mark of the Web).
-    Add-ShellVerb -ParentPath "$classes\*\shell" -KeyName 'WinaeroUnblockFile' -Label 'Unblock' -Icon 'imageres.dll,-1401' `
+    #Shift+right-click ONLY (-Extended, 2026-10-23). The Mark of the Web is what makes SmartScreen
+    #check a download and Office block its macros, so removing it should take a deliberate act,
+    #not sit on every file's menu.
+    Add-ShellVerb -ParentPath "$classes\*\shell" -KeyName 'WinaeroUnblockFile' -Label 'Unblock' -Icon 'imageres.dll,-1401' -Extended `
         -Command (New-PathSafeCmd -Token '%1' -Options '-NoProfile -WindowStyle Hidden' -Code 'Unblock-File -LiteralPath $ET_PATH')
 
     #View owner, for files and folders.
@@ -3775,8 +4381,12 @@ Function AddContextMenuTools {
     Add-ShellVerb -ParentPath "$classes\*\shell" -KeyName 'WinaeroFileHash' -Label 'Hash' -Icon 'imageres.dll,-5301' -SubItems $hashes
 
     #Extract an MSI's contents (administrative install into <file>.extracted).
+    #CHANGED 2026-10-23: New-PathSafeCmd like every other path verb. The old cmd /c line was safe
+    #from & only because %1 sat inside quotes, and cmd still expanded any %NAME% in the file name.
+    $msiCode = '$d = $ET_PATH + ''.extracted''; [void][IO.Directory]::CreateDirectory($d); ' +
+               'Start-Process msiexec.exe -ArgumentList (''/a {0}{1}{0} /qb TARGETDIR={0}{2}{0}'' -f [char]34,$ET_PATH,$d)'
     Add-ShellVerb -ParentPath "$classes\Msi.Package\shell" -KeyName 'WinaeroExtractMsi' -Label 'Extract contents' -Icon 'msiexec.exe' `
-        -Command 'cmd.exe /c mkdir "%1.extracted" & msiexec.exe /a "%1" /qb TARGETDIR="%1.extracted"'
+        -Command (New-PathSafeCmd -Token '%1' -Options '-NoProfile -WindowStyle Hidden' -Code $msiCode)
 
     #Run as administrator for .msi and .vbs: they have real ProgIDs, so the canonical 'runas'
     #verb works and the shell does the elevating.
@@ -3788,16 +4398,19 @@ Function AddContextMenuTools {
     #.ps1 entries. Windows already supplies 'Edit' and 'Run with PowerShell'; these use distinct
     #key names so nothing built in is overwritten. -ExecutionPolicy Bypass is per-process: it
     #lets the script you right-clicked run without changing the machine policy.
+    #The two non-admin Run entries are Shift+right-click ONLY (-Extended, 2026-10-23): they run a
+    #downloaded script with no prompt at all, one mis-click from 'Modify'. The admin ones have the
+    #UAC prompt as their confirmation, so they stay on the normal menu.
     Add-ShellVerb -ParentPath $ps1 -KeyName 'WinaeroRunAsAdmin' -Label 'Run as administrator' -Icon 'powershell.exe' -LuaShield `
         -Command (New-PathSafeCmd -Token '%1' -Options '-NoProfile -WindowStyle Hidden' `
             -Code 'Start-Process powershell.exe -Verb RunAs -ArgumentList ''-NoProfile'',''-ExecutionPolicy'',''Bypass'',''-NoExit'',''-File'',([char]34+$ET_PATH+[char]34)')
     Add-ShellVerb -ParentPath $ps1 -KeyName 'WinaeroModify' -Label 'Modify' -Icon 'notepad.exe' -Command 'notepad.exe "%1"'
-    Add-ShellVerb -ParentPath $ps1 -KeyName 'WinaeroRunPS5' -Label 'Run with Windows PowerShell (keep open)' -Icon 'powershell.exe' `
+    Add-ShellVerb -ParentPath $ps1 -KeyName 'WinaeroRunPS5' -Label 'Run with Windows PowerShell (keep open)' -Icon 'powershell.exe' -Extended `
         -Command 'powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File "%1"'
     if (-not (Invoke-Silently -AsBool { Get-Command pwsh.exe -ErrorAction Stop })) {
         Write-Host "  PowerShell 7 is not installed - its two .ps1 entries are added anyway and start working once it is." -ForegroundColor DarkYellow
     }
-    Add-ShellVerb -ParentPath $ps1 -KeyName 'WinaeroRunPS7' -Label 'Run with PowerShell 7' -Icon 'pwsh.exe' `
+    Add-ShellVerb -ParentPath $ps1 -KeyName 'WinaeroRunPS7' -Label 'Run with PowerShell 7' -Icon 'pwsh.exe' -Extended `
         -Command 'pwsh.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File "%1"'
     Add-ShellVerb -ParentPath $ps1 -KeyName 'WinaeroRunPS7Admin' -Label 'Run with PowerShell 7 (Administrator)' -Icon 'pwsh.exe' -LuaShield `
         -Command (New-PathSafeCmd -Token '%1' -Options '-NoProfile -WindowStyle Hidden' `
@@ -17401,10 +18014,16 @@ title Windows Cleanup
 :: ============================================================
 
 :: --- Self-elevate if not already admin ---
+:: The path goes inside a single-quoted PowerShell string, so any ' in it is
+:: doubled first: a folder like C:\Users\Bob's PC would otherwise break the
+:: launch, and a crafted folder name could run PowerShell of its own. Set
+:: BEFORE the if block, because cmd expands %...% for a whole block at once.
+set "PSSELF=%~f0"
+set "PSSELF=%PSSELF:'=''%"
 net session >nul 2>&1
 if errorlevel 1 (
     echo Requesting administrator privileges...
-    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    powershell -NoProfile -Command "Start-Process -FilePath '%PSSELF%' -Verb RunAs"
     exit /b
 )
 
@@ -17979,15 +18598,27 @@ goto :menu
 :nomenu
 
 rem ---------- re-launch as administrator if needed ----------------------
+rem  The path and the arguments get embedded in a single-quoted PowerShell
+rem  string below, so a single quote in either one would end that string
+rem  early - a folder like C:\Users\Bob's PC breaks the launch outright,
+rem  and an argument could inject PowerShell of its own. PowerShell escapes
+rem  a quote inside a single-quoted string by doubling it, so do that.
+rem  The "if defined" guard is not decorative: on an undefined variable cmd
+rem  does not perform the substitution at all and leaks the literal text,
+rem  and the substitution has to be !delayed! so it happens after the guard.
+set "PSSCRIPT=%SCRIPT:'=''%"
+set "PSARGS="
+if defined RELAUNCH set "PSARGS=!RELAUNCH:'=''!"
+
 rem  /verify only reads, and /dryrun only prints, so neither needs elevating
 if "%DRYRUN%"=="0" if "%VERIFY%"=="0" (
     net session >nul 2>&1
     if errorlevel 1 (
         echo Administrator rights are required - re-launching elevated...
-        if "!RELAUNCH!"=="" (
-            powershell -NoProfile -Command "try { Start-Process -FilePath '!SCRIPT!' -Verb RunAs -ErrorAction Stop } catch { exit 1 }"
+        if not defined PSARGS (
+            powershell -NoProfile -Command "try { Start-Process -FilePath '!PSSCRIPT!' -Verb RunAs -ErrorAction Stop } catch { exit 1 }"
         ) else (
-            powershell -NoProfile -Command "try { Start-Process -FilePath '!SCRIPT!' -ArgumentList '!RELAUNCH!' -Verb RunAs -ErrorAction Stop } catch { exit 1 }"
+            powershell -NoProfile -Command "try { Start-Process -FilePath '!PSSCRIPT!' -ArgumentList '!PSARGS!' -Verb RunAs -ErrorAction Stop } catch { exit 1 }"
         )
         if errorlevel 1 (
             echo.
@@ -19396,14 +20027,17 @@ Invoke-Step "Applying the hosts blocklist"           { BlocklistMNNSSM }
 Invoke-Step "Disabling AutoRun"                      { AutoRunDis } -Spin
 Invoke-Step "Disabling the On-Screen Keyboard"       { OSKDis } -Spin
 Invoke-Step "Disabling Aero Shake"                   { AeroShakeDisable } -Spin
-#Was two steps hardcoded to adapters literally named "Ethernet" and "Wi-Fi". Now one step
-#that enumerates connected physical adapters - and deliberately skips virtual ones, so it
-#cannot clobber DNS on a VMware/Hyper-V/VPN adapter.
-Invoke-Step "Setting DNS to CloudFlare"              { Set-CloudFlareDNS } -Spin
 #REPLACES the old NetFullReset step. NetResetReboot shells out to net-reset-reboot.bat with
 #/y /none, so it does the full stack reset but explicitly does NOT reboot - the reboot stays
 #at the very end of this script as the prompt the user answers.
 Invoke-Step "Resetting the local network stack"      { NetResetReboot }
+#Was two steps hardcoded to adapters literally named "Ethernet" and "Wi-Fi". Now one step
+#that enumerates connected physical adapters - and deliberately skips virtual ones, so it
+#cannot clobber DNS on a VMware/Hyper-V/VPN adapter.
+#MOVED after the reset (2026-10-23). The reset's netsh int ipv6 reset can clear hand-set IPv6
+#DNS, and net-reset-reboot.bat only saves and re-applies the IPv4 ones, so the IPv6 servers
+#this step now sets might not have survived it.
+Invoke-Step "Setting DNS to CloudFlare"              { Set-CloudFlareDNS } -Spin
 Invoke-Step "Setting the Ultimate Performance power plan" { HIGHPOWA }
 Invoke-Step "Disabling USB/PCIe/NIC power saving"    { OptimizeLinkAndInputPower } -Spin
 Invoke-Step "Tuning scheduler and timer resolution"  { TuneSchedulerAndTimer } -Spin
@@ -19421,6 +20055,11 @@ Invoke-Step "Disabling Activity History"             { DisableActivityHistory } 
 Invoke-Step "Disabling cross-device clipboard sync"  { DisableCloudClipboard } -Spin
 Invoke-Step "Restricting Delivery Optimization"      { LimitDeliveryOptimization } -Spin
 Invoke-Step "Enabling DNS over HTTPS"                { EnableDoH } -Spin
+#ADDED 2026-10-23 (FEATURES.md ADDENDUM 8). Defender and the driver blocklist change settings
+#an anti-cheat welcomes; the firewall step only repairs what something else switched off.
+Invoke-Step "Hardening Microsoft Defender"           { HardenDefender } -Spin
+Invoke-Step "Enabling the vulnerable driver blocklist" { EnableDriverBlocklist } -Spin
+Invoke-Step "Checking firewall and Remote Desktop"   { CheckFirewallAndRdp } -Spin
 
 #ADDED (Tier A). Grouped after the existing hardening for the same reason DoH sits last:
 #nothing here should run before the network steps have settled.
@@ -19443,6 +20082,10 @@ Invoke-Step "Adding Windows Update to Control Panel"  { AddControlPanelWU } -Spi
 Invoke-Step "Adding context menu tools"               { AddContextMenuTools } -Spin
 Invoke-Step "Restoring the classic context menu"      { SetClassicContextMenu } -Spin
 
+#ADDED 2026-10-23: read-only, so it sits after every change and reports the final state. Its
+#lines are printed again under the run summary.
+Invoke-Step "Checking anti-cheat readiness"          { Show-AntiCheatReadiness }
+
 #ADDED: opt-in, interactive, and deliberately the LAST step - you answer it once and walk away,
 #and a blank answer (or no console) skips it. No -Spin: the spinner would fight the prompt.
 Invoke-Step "Built-in Administrator account (optional)" { EnableBuiltinAdmin }
@@ -19451,6 +20094,10 @@ Write-Host "Unloading the HKCR drive..." -ForegroundColor Yellow
 Remove-PSDrive HKCR -ErrorAction SilentlyContinue
 
 Write-RunSummary
+
+#ADDED 2026-10-23: the private work folder (SYSTEM helper payloads, the net-reset copy) goes
+#now. Any folder a crashed run left behind is swept up by this too.
+Remove-WorkFolder
 
 Stop-Transcript | Out-Null
 Start-Sleep 1

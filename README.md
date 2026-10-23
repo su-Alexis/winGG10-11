@@ -33,7 +33,7 @@ FEATURES.md first and taking a restore point.
 
 ## What it does
 
-54 steps. FEATURES.md has the detail for each one and why it is there.
+58 steps. FEATURES.md has the detail for each one and why it is there.
 
 | Area | Steps |
 |---|---|
@@ -42,9 +42,10 @@ FEATURES.md first and taking a restore point.
 | Privacy | Telemetry and ad ID, Cortana, DiagTrack, Recall / Windows AI, Activity History, cross-device clipboard (local Win+V kept), Delivery Optimization limited to LAN, error reporting and CEIP, background apps, Copilot, Edge telemetry, ads / tips / web suggestions, leftover telemetry tasks. `dmwappushservice` is deliberately kept on |
 | Explorer and shell | 3D Objects removed, Edge PDF takeover stopped, seconds on the clock, On-Screen Keyboard and Aero Shake off, performance visual effects (ClearType kept), Explorer extras (Start "Recommended" hidden on Enterprise / Education / SE only), Windows Photo Viewer, Windows Update in Control Panel, right-click tools, the classic context menu on Windows 11 |
 | Performance and gaming | .NET 3.5, game and system tuning, Fast Boot off, CPU unparked, Nagle off, the Ultimate Performance power plan, USB / PCIe / NIC power saving off, scheduler and timer tuning, hibernation and Reserved Storage off |
-| Network | Dan Pollock's hosts blocklist (13,108 domains), CloudFlare DNS with DNS over HTTPS, a network stack reset that applies on reboot |
-| Security | AutoRun off, SMBv1 and guest auth off, LLMNR / mDNS / NetBIOS-NS off, WDigest off and LSA protection on, the PowerShell v2 engine removed, WPAD / Remote Assistance / Remote Registry off |
-| Optional | The built-in Administrator account, only if you give it a password |
+| Network | Dan Pollock's hosts blocklist (13,108 domains), CloudFlare DNS (IPv4, and IPv6 where you have it) with DNS over HTTPS, a network stack reset that applies on reboot |
+| Security | AutoRun off, SMBv1 and guest auth off, LLMNR / mDNS / NetBIOS-NS off, WDigest off, LSA protection on and NTLMv2 only, the PowerShell v2 engine removed, WPAD / Remote Assistance / Remote Registry off, Defender PUA blocking and five attack surface reduction rules (skipped if you use another antivirus), Microsoft's vulnerable driver blocklist on, the firewall turned back on if something turned it off, Remote Desktop made to require NLA if it is on |
+| Report | An anti-cheat readiness check: Windows 11, TPM 2.0, Secure Boot, VBS, Memory Integrity, IOMMU, test-signing. Read-only - the script never changes any of these |
+| Optional | The built-in Administrator account, only if you give it a password. UAC is turned on for it |
 
 ## How it runs
 
@@ -59,18 +60,22 @@ Right-click → **Run with PowerShell**, or double-click it.
   another admin's UAC password it would land in that admin's profile
 - Every step runs through one harness that prints `[ OK ]`, `[ PARTIAL ]` or
   `[ ERROR ]`, counts errors per step, times each one, and prints a run summary
+- Never runs anything elevated from a folder a normal user can write to: its
+  helper files live in a random, admin-only folder under `C:\ProgramData` that is
+  deleted at the end. See FEATURES.md, ADDENDUM 8
 - Near the end it offers to enable the built-in Administrator account. Leave it
   blank and press Enter to skip. It only goes ahead with a password you type twice,
-  and it sets that password before enabling the account
+  and it sets that password (and turns UAC on for that account) before enabling it
 - Answer `nn` at the end to skip the reboot
 
 ## What it leaves behind
 
 | Location | Contents |
 |---|---|
-| Desktop | `cleanup_main.bat`, `net-reset-reboot.bat`, `net-reset-lite.bat`, a God Mode folder |
-| `C:\Temp\WindowsDebloat&Optimize` | Run transcripts, hosts backups (`hosts.original` is your pre-script file, kept for good), unrecognised-package reports |
-| Right-click menu | The classic menu on Windows 11, plus tools: admin consoles, Hash, Take Ownership, Unblock, View owner, Encrypt and more. To get the Windows 11 menu back: `reg.exe delete "HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" /f`, then restart Explorer |
+| Desktop | `cleanup_main.bat`, `net-reset-reboot.bat`, `net-reset-lite.bat`, a God Mode folder, and `netreset-logs\` from the network reset |
+| `C:\Temp\WindowsDebloat&Optimize` | Run transcripts, hosts backups (`hosts.original` is your pre-script file, kept for good), unrecognised-package reports. Administrators can change it; everyone else can only read it |
+| `C:\Windows\System32\drivers\etc` | `hosts.winGG.previous`, the hosts file as it was just before this run |
+| Right-click menu | The classic menu on Windows 11, plus tools: admin consoles, Hash, Take Ownership, Unblock, View owner, Encrypt and more. Unblock and the two non-admin "Run with PowerShell" entries need Shift+right-click. To get the Windows 11 menu back: `reg.exe delete "HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" /f`, then restart Explorer |
 | Elsewhere | Windows Photo Viewer back under Open with, and Windows Update in Control Panel |
 
 The three batch tools are standalone and usable on their own afterwards. They each
@@ -86,6 +91,19 @@ have their own repository, with full documentation:
 Those repos hold the authoritative copies of each tool's documentation. The copies
 embedded in this script are what get written to the Desktop.
 
+## Verify your download
+
+Each [release](https://github.com/su-Alexis/winGG10-11/releases) lists the SHA256 of the
+`winGG10&11.ps1` attached to it. Download that file, then:
+
+```powershell
+Get-FileHash -Algorithm SHA256 '.\winGG10&11.ps1'
+```
+
+The hash must match exactly. Compare against the release asset only: the repository
+stores the script with LF line endings and checks it out with CRLF, so a "Raw" download
+and a clone give different bytes, and so different hashes, for the same script.
+
 ## Tests
 
 `tests/adaptive-test.ps1` covers the ASCII-art reveal — the one part of this script
@@ -97,7 +115,12 @@ runtime.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\adaptive-test.ps1
 ```
 
-It needs a console window and makes no system changes. The animation functions are
+It needs a console window and makes no system changes, so it is run by hand.
+
+Every push and pull request runs `.github/workflows/ci.yml` on Windows: the script must
+parse under Windows PowerShell 5.1 with no errors, every function must be named in the
+header's function list, PSScriptAnalyzer's security rules must find nothing, and the
+SHA256 of the result is printed. The animation functions are
 lifted verbatim out of the script rather than reimplemented, and the test re-parses the
 script to confirm those copies are still current, so it cannot quietly pass against a
 stale copy. See [tests/README.md](tests/README.md).
