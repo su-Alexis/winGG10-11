@@ -1099,13 +1099,14 @@ localhost and wpad lines are counted. Same method as ADDENDUM 5, done by script:
 The header's LAST EDITED and Version lines were updated with it (Version 25H2,
 which is what 26200 is).
 
+Re-scanned after the refresh (2026-10-22 18:36): scan-harness.ps1 against the
+refreshed file (sha256 CFD881C8...EB1B) ran with no refusal. The wrapped hash
+B1000579... was recomputed off-box and matches, so that exact file was scanned.
+
 ## STILL TO VERIFY
 
-  1. scan-harness.ps1 again, against the refreshed file. The 10-21 refusal involved
-     the blocklist and the embedded cleanup .bat together, so a blocklist change
-     is exactly the kind of edit that needs a re-scan.
-  2. The real-hive check from inside the Claude app: it should stop and ask.
-  3. Validate-Tweaks.ps1 from ExtraTweaks can check a machine this script has run on,
+  1. The real-hive check from inside the Claude app: it should stop and ask.
+  2. Validate-Tweaks.ps1 from ExtraTweaks can check a machine this script has run on,
      since the values are the same. Expected, because of LEFT OUT: pageWindowsUpdate
      MISSING, and pageStartRecommended MISSING on Home/Pro (INERT there anyway); pageDisableMRT, pageNavPaneDefaultItems and
      pageDisableTelemetry (dmwappushservice) INCOMPLETE; pageEnableAdministrator
