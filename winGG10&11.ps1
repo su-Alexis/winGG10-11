@@ -3815,10 +3815,6 @@ Function AddContextMenuTools {
 ################################################################################################################################################################################################################################################################################################################################
 ################################################################################################################################################################################################################################################################################################################################
 
-#ADDED: before anything prints or changes - see REAL-HIVE CHECK. Stops (or asks) when HKCU is
-#not the signed-in user's own registry, which would make every per-user tweak a silent no-op.
-Confirm-RealUserHive
-
 #Hi :) you're beautiful
 CleanMemoryy
 Start-Sleep -Milliseconds 100
@@ -3921,6 +3917,14 @@ $Debloatlogmessage -split '' |
 }
 Write-Host " "
 Start-Sleep -Milliseconds 250
+
+#ADDED: before anything changes - see REAL-HIVE CHECK. Stops (or asks) when HKCU is not the
+#signed-in user's own registry, which would make every per-user tweak a silent no-op.
+#MOVED here from above the banner: its status lines printed over the top of the intro. Nothing
+#between there and here touches the registry or the system - it is colours, art and text - so
+#it still runs before the first change. Keep it above Start-Transcript: on a stop it calls
+#exit, and in an interactive session that would leave the transcript running.
+Confirm-RealUserHive
 ############################################################################################################################################
 ############################################################################################################################################
 ##

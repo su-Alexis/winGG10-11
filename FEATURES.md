@@ -918,7 +918,7 @@ and the variant must differ from this file in exactly ONE hunk.
 
 # ADDENDUM 7 - EXTRA TWEAKS MERGED IN (2026-10-22)
 
-707,895 bytes / 19,613 lines / 79 functions / 54 steps.
+708,247 bytes / 19,617 lines / 79 functions / 54 steps.
 NOT YET RUN as a whole - see "STILL TO VERIFY" at the end.
 
 ## WHAT THIS IS
@@ -977,10 +977,12 @@ To undo it, from a normal terminal (no admin needed):
 
 then restart Explorer or sign out. The step prints the same command.
 
-## NEW: REAL-HIVE CHECK (runs first, before the banner)
+## NEW: REAL-HIVE CHECK (runs after the intro, before the first change)
 
 That MSIX finding applies to every HKCU tweak in this script, not just the menu, so it
-is now checked once at the start. Confirm-RealUserHive stops and asks before anything
+is now checked once at the start. It runs straight after the intro's log-folder line
+(it first ran above the banner, and its two status lines broke the intro - moved
+2026-10-23). The intro is colours, art and text only, so nothing has changed by then. Confirm-RealUserHive stops and asks before anything
 changes when:
 
   - HKCU is virtualized. Detected by comparing the HKCU subkey names this process sees
