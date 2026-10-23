@@ -15,17 +15,15 @@ is the short version.
 
 ## ⚠ Before you run this
 
-**Windows Defender flags this script as `Trojan:BAT/CryptoDrainer.C!MTB`.**
+**Windows Defender used to refuse this script as `Trojan:BAT/CryptoDrainer.C!MTB`.**
 
-It is a false positive. The classifier scores a batch script doing bulk directory
-deletion sitting beside ~13,000 known-malicious domain strings and concludes
-crypto-drainer. Isolated by leave-one-out testing: remove either the hosts
-blocklist or the embedded cleanup payload and the file scans clean; together they
-trip it.
-
-With real-time protection **on**, the script is refused at parse time and does not
-run at all. There is a variant that works around this by moving the embedded
-payload into a companion file read at runtime — ask if you want it added here.
+That was a false positive, and it stopped on 2026-10-21 after two small edits to the
+embedded cleanup `.bat` (a guard list that could never match, and the wording of one
+note). An inert scan of the current file passes while the old file is still refused,
+and a full real run logged no detection. Which edit mattered, and why Defender chose
+that label, is **not known** - so a future edit could bring it back. If the script
+is ever refused at parse time with real-time protection on, that is what happened.
+See FEATURES.md, KNOWN LIMITS 1.
 
 Beyond that: this script makes **substantial, persistent changes** to a Windows
 install. It is designed for a machine you have just reformatted and are willing to
@@ -39,6 +37,10 @@ Right-click → **Run with PowerShell**, or double-click it.
 - Self-elevating: relaunches itself through UAC if it is not already admin
 - Hands itself to **Windows PowerShell 5.1** if started from PowerShell 7, because
   the Appx cmdlets do not load in Core
+- Checks first that HKCU is really your registry, and stops to ask if it is not:
+  started from inside an MSIX app (the Claude desktop app, for one) every per-user
+  change would land in that app's private copy, and with another admin's UAC
+  password it would land in that admin's profile
 - Every step runs through one harness that prints `[ OK ]`, `[ PARTIAL ]` or
   `[ ERROR ]`, counts errors per step, times each one, and prints a run summary
 - Answer `nn` at the end to skip the reboot

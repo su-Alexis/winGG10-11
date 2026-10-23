@@ -50,8 +50,8 @@
 ###################################################################
 ###################################################################
 ##                                                               ##
-##           LAST EDITED : 09 - 13 - 2026 01:08:15 A.M.          ##
-##                          Version 24H2                         ##
+##           LAST EDITED : 10 - 22 - 2026 06:30:46 P.M.          ##
+##                          Version 25H2                         ##
 ##                                                               ##
 ###################################################################
 ###################################################################
@@ -82,6 +82,9 @@
 ##  Invoke-Step                     run one step, report OK / PARTIAL / ERROR, record it
 ##  Write-RunSummary                the tally printed at the end
 ##  CleanMemoryy                    drop variables created during the run
+##  Confirm-RealUserHive            refuse to run against a virtualized / wrong-user HKCU
+##  Set-RegValueNet                 .NET registry write, for '*' keys and empty values
+##  Add-ShellVerb                   one context-menu entry (New-PathSafeCmd builds its command)
 ##
 ##
 ##  DEBLOAT:
@@ -99,6 +102,8 @@
 ##  DisableDiagTrackService         stop + disable DiagTrack
 ##  CheckDMWService                 put dmwappushservice back if something disabled it
 ##  Stop-EdgePDF                    stop Edge grabbing .pdf
+##  BlockAdsAndSuggestions          lock screen / Start / Settings ads, web search suggestions
+##  DisableTelemetryTasks           appraiser + Autochk tasks, feedback prompts, MRT reporting
 ##
 ##
 ##  OPTIMIZE / TWEAK:
@@ -113,6 +118,12 @@
 ##  AeroShakeDisable                stop shake-to-minimise
 ##  Remove3dObjects                 drop 3D Objects from This PC
 ##  HIGHPOWA                        power plan -> High Performance
+##  ApplySystemExtras               nav pane, power throttling, BSOD detail, Insider page, etc.
+##  RestorePhotoViewer              Windows Photo Viewer back in "Open with" / Default apps
+##  AddControlPanelWU               Windows Update entry in Control Panel
+##  AddContextMenuTools             right-click tools (admin consoles, hash, take ownership...)
+##  SetClassicContextMenu           Windows 10 right-click menu on Windows 11
+##  EnableBuiltinAdmin              OPT-IN: enable built-in Administrator, password required
 ##
 ##
 ##  NETWORK:
@@ -3053,6 +3064,707 @@ Function TuneSchedulerAndTimer {
     Write-Host "  Win32PrioritySeparation=38, GlobalTimerResolutionRequests=1 (reboot to apply)." -ForegroundColor Green
 }
 
+#===============================================================================================
+#  REAL-HIVE CHECK
+#  Runs once, before the banner and before any step. Every HKCU tweak in this script assumes it
+#  is writing the signed-in user's own registry. Two situations quietly break that:
+#
+#    1. Launched from inside an MSIX-packaged app - the Claude desktop app is the one that bit
+#       us. Its child processes, elevated ones included, see HKCU merged with the app's private
+#       hive and WRITE INTO THAT HIVE. Explorer never sees any of it. Proven on 26200 on
+#       2026-10-22: the classic-menu shim "did nothing" for weeks because it only ever existed
+#       in that private copy. GetCurrentPackageFullName cannot detect it - it reports "no
+#       package" from inside that shell - so the check compares what THIS process sees in HKCU
+#       with what a process started fresh by WMI sees. Same user, same hive, so the lists match
+#       unless one side is looking at an overlay.
+#    2. Over-the-shoulder UAC: elevating with a DIFFERENT admin account's password makes HKCU
+#       that admin's hive, so every per-user tweak lands in the wrong profile.
+#
+#  Either one is a stop-and-ask, not a hard stop: type yes to carry on regardless.
+#  Read-only throughout. The WMI probe only lists subkey names into a temp file in the log
+#  folder and is passed as plain text - no encoded command.
+#===============================================================================================
+
+#Subkey names under a few HKCU areas an app-private overlay typically adds to. One line of
+#single-quoted code on purpose: the WMI probe runs this exact text, so it has to survive being
+#a command-line argument (no double quotes, no newlines).
+$script:HkcuProbeCode = 'foreach ($s in ''Software'', ''Software\Classes'', ''Software\Classes\Applications'', ''Software\Classes\CLSID'') { $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($s); if (-not $k) { $s + ''=<absent>''; continue }; try { $s + ''='' + ((@($k.GetSubKeyNames()) | Sort-Object) -join ''|'') } finally { $k.Close() } }'
+
+Function Test-HkcuVirtualized {
+    #$true when this process sees a different HKCU than a process started fresh by WMI, $false
+    #when they match, $null when the comparison could not be made.
+    #The probe writes into the log folder rather than %TEMP%: an MSIX app can redirect AppData,
+    #and C:\Temp is outside anything it virtualizes.
+    $out = Join-Path $DebloatFolder ('hkcu-probe-{0}.txt' -f [guid]::NewGuid())
+    $q   = $out -replace "'", "''"
+    $cmd = "powershell.exe -NoProfile -NonInteractive -Command ""@($script:HkcuProbeCode) -join [char]10 | Set-Content -LiteralPath '$q.tmp' -Encoding UTF8; Move-Item -LiteralPath '$q.tmp' -Destination '$q'"""
+    try {
+        $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd } -ErrorAction Stop
+        if ($r.ReturnValue -ne 0) { return $null }
+        for ($i = 0; $i -lt 80 -and -not (Test-Path -LiteralPath $out); $i++) { Start-Sleep -Milliseconds 250 }
+        if (-not (Test-Path -LiteralPath $out)) { return $null }
+        $theirs = (Get-Content -LiteralPath $out -Raw).Trim()
+        $mine   = (@(& ([scriptblock]::Create($script:HkcuProbeCode))) -join [char]10).Trim()
+        return ($theirs -ne $mine)
+    }
+    catch { return $null }
+    finally { Remove-Item -LiteralPath $out, "$out.tmp" -Force -ErrorAction SilentlyContinue }
+}
+
+Function Get-DesktopUserSid {
+    #SID of whoever owns explorer.exe in this logon session, or $null if there is no shell.
+    $session = [Diagnostics.Process]::GetCurrentProcess().SessionId
+    $shell = Get-CimInstance -ClassName Win32_Process -Filter "Name='explorer.exe' AND SessionId=$session" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $shell) { return $null }
+    $owner = Invoke-CimMethod -InputObject $shell -MethodName GetOwnerSid -ErrorAction SilentlyContinue
+    if ($owner -and $owner.ReturnValue -eq 0) { return [string]$owner.Sid }
+    return $null
+}
+
+Function Confirm-RealUserHive {
+    Write-Host "Checking that HKCU is your real registry. . ." -ForegroundColor Yellow
+    $problems = @()
+
+    $virtual = Test-HkcuVirtualized
+    if ($virtual) {
+        $problems += 'This PowerShell sees a VIRTUALIZED HKCU - it was started from inside an MSIX app (the Claude desktop app, for one). Every per-user change would go to that app''s private registry and Windows would never see it. Run this from Explorer or a normal terminal instead.'
+    }
+    elseif ($null -eq $virtual) {
+        Write-Host "  Could not run the HKCU comparison (WMI probe failed) - carrying on." -ForegroundColor DarkYellow
+    }
+
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $desktopUser = Get-DesktopUserSid
+    if ($desktopUser -and $desktopUser -ne $me.User.Value) {
+        $problems += "Elevated as $($me.Name), but the desktop belongs to SID $desktopUser. Every per-user change would land in $($me.Name)'s profile, not yours. Elevate from your own admin-capable account instead."
+    }
+
+    if ($problems.Count -eq 0) {
+        Write-Host "  HKCU is the signed-in user's own hive." -ForegroundColor Green
+        return
+    }
+    foreach ($p in $problems) { Write-Host "  $p" -ForegroundColor Red }
+    #Read-Host throws without a console. That counts as "no" - stopping is the safe answer.
+    $answer = $null
+    try { $answer = Read-Host -Prompt '  Type yes to continue anyway, anything else to stop' }
+    catch { $answer = $null }
+    if ($answer -ne 'yes') {
+        Write-Host "  Stopped. No system changes were made." -ForegroundColor Yellow
+        Start-Sleep 3
+        exit 1
+    }
+    Write-Host "  Continuing at your request." -ForegroundColor DarkYellow
+}
+
+#===============================================================================================
+#  EXTRA TWEAKS (merged from ExtraTweaks\Apply-WinaeroTweaks.ps1, reviewed 2026-10-22)
+#  That script reproduced a Winaero Tweaker export as native registry changes. Everything it
+#  did that this script did not already do lives here, as ordinary Invoke-Step steps.
+#  NOT carried over, on purpose - see ADDENDUM 7 in FEATURES.md for the full list and reasons:
+#    - anything this script already sets (background apps, error reporting, Copilot)
+#    - dmwappushservice disabled: CheckDMWService deliberately turns it back on
+#    - Windows Update set to notify-before-download: that delays security patches
+#    - MRT DontOfferThroughWUAU: this script does not switch off security tooling
+#    - Start-menu "Recommended" policy on Home/Pro: it is only honoured on Enterprise,
+#      Education and SE, so ApplySystemExtras writes it on those editions alone
+#    The built-in Administrator is NOT enabled here either: that is EnableBuiltinAdmin, an opt-in
+#    prompt near the end of the run that refuses to proceed without a password.
+#===============================================================================================
+
+Function Set-RegValueNet {
+    #Set-RegValue above goes through the PowerShell registry provider. That is fine for most
+    #keys, but not for these:
+    #  - several context-menu keys are literally named '*' (HKLM\SOFTWARE\Classes\*\shell) and
+    #    the provider treats that as a wildcard, so it cannot create them;
+    #  - several values are deliberately an EMPTY string (the classic-menu shim, HasLUAShield,
+    #    SubCommands), and reg.exe is no help there: Windows PowerShell 5.1 drops "" when it
+    #    passes arguments to a native exe, so 'reg add ... /d ""' writes the wrong thing.
+    #The .NET API has neither problem. Same argument order as Set-RegValue. Use '' as the name
+    #for a key's default value. A failure is printed and left in $Error, so Invoke-Step reports
+    #PARTIAL instead of OK.
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [AllowEmptyString()][string]$Name = '',
+        [AllowEmptyString()]$Value,
+        [ValidateSet('DWord', 'String', 'ExpandString')][string]$Type = 'DWord'
+    )
+    $hive, $sub = $Path -split ':\\', 2
+    $root = switch ($hive) {
+        'HKLM' { [Microsoft.Win32.Registry]::LocalMachine }
+        'HKCU' { [Microsoft.Win32.Registry]::CurrentUser }
+        default { throw "Set-RegValueNet: unsupported hive in '$Path'" }
+    }
+    $data = if ($Type -eq 'DWord') { [int]$Value } else { [string]$Value }
+    try {
+        $key = $root.CreateSubKey($sub)
+        try { $key.SetValue($Name, $data, [Microsoft.Win32.RegistryValueKind]$Type) }
+        finally { $key.Close() }
+    }
+    catch {
+        $shown = if ($Name) { $Name } else { '(default)' }
+        Write-Host "  could not set $Path :: $shown - $($_.Exception.Message)" -ForegroundColor DarkYellow
+    }
+}
+
+Function Disable-TaskIfPresent {
+    #Microsoft renames these between builds, so a missing task is reported and skipped rather
+    #than counted as a failure. A task the OS protects (several are owned by TrustedInstaller on
+    #recent builds) does count - it genuinely was not disabled.
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Name)
+    $task = Invoke-Silently { Get-ScheduledTask -TaskPath $Path -TaskName $Name -ErrorAction Stop }
+    if (-not $task) { Write-Host "  task '$Name' is not on this build - nothing to disable." -ForegroundColor DarkGray; return }
+    if ([string]$task.State -eq 'Disabled') { Write-Host "  task '$Name' already disabled." -ForegroundColor Green; return }
+    try {
+        Disable-ScheduledTask -TaskPath $Path -TaskName $Name -ErrorAction Stop | Out-Null
+        Write-Host "  task '$Name' disabled." -ForegroundColor Green
+    }
+    catch { Write-Host "  task '$Name' is protected by the OS and was not disabled: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+}
+
+Function Add-SettingsPageHide {
+    #SettingsPageVisibility is ONE shared REG_SZ ("hide:a;b;c"), so merge into it rather than
+    #overwrite whatever else is already hidden. Any other form ("showonly:...") is left alone.
+    param([Parameter(Mandatory)][string]$Page)
+    $sub = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
+    $existing = ''
+    $k = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($sub)
+    if ($k) { try { $existing = [string]$k.GetValue('SettingsPageVisibility', '') } finally { $k.Close() } }
+
+    $pages = @()
+    if ($existing -match '^\s*hide:\s*(.+)$') { $pages = @($Matches[1] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+    elseif ($existing.Trim()) {
+        Write-Host "  SettingsPageVisibility holds '$existing' - leaving it alone." -ForegroundColor DarkYellow
+        return
+    }
+    if ($pages -contains $Page) { return }
+    Set-RegValueNet "HKLM:\$sub" 'SettingsPageVisibility' ('hide:' + (@($pages + $Page) -join ';')) 'String'
+}
+
+Function Add-ShellVerb {
+    #One context-menu entry, or a cascading one when -SubItems is given. MUIVerb rather than the
+    #default value: it survives localisation and lets the cascading form work without a command.
+    param(
+        [Parameter(Mandatory)][string]$ParentPath,
+        [Parameter(Mandatory)][string]$KeyName,
+        [Parameter(Mandatory)][string]$Label,
+        [string]$Command,
+        [string]$Icon,
+        [string]$Position,
+        [switch]$LuaShield,
+        [switch]$Extended,
+        [System.Collections.IEnumerable]$SubItems
+    )
+    #Plain string joins, not Join-Path: Join-Path goes through the provider, and '*' is a
+    #wildcard there.
+    $root = "$ParentPath\$KeyName"
+    Set-RegValueNet $root 'MUIVerb' $Label 'String'
+    if ($Icon)      { Set-RegValueNet $root 'Icon' $Icon 'String' }
+    if ($Position)  { Set-RegValueNet $root 'Position' $Position 'String' }
+    if ($LuaShield) { Set-RegValueNet $root 'HasLUAShield' '' 'String' }
+    if ($Extended)  { Set-RegValueNet $root 'Extended' '' 'String' }
+
+    if ($SubItems) {
+        #Empty SubCommands plus a 'shell' subkey is the modern cascading-menu form.
+        Set-RegValueNet $root 'SubCommands' '' 'String'
+        $i = 0
+        foreach ($item in $SubItems) {
+            $i++
+            #Concatenated, not one -f string: a '{' anywhere in $root would break the format.
+            $child = "$root\shell\" + ('{0:D2}{1}' -f $i, ($item.Label -replace '[^A-Za-z0-9]', ''))
+            Set-RegValueNet $child 'MUIVerb' $item.Label 'String'
+            if ($item.Contains('Icon') -and $item.Icon) { Set-RegValueNet $child 'Icon' $item.Icon 'String' }
+            if ($item.Contains('LuaShield') -and $item.LuaShield) { Set-RegValueNet $child 'HasLUAShield' '' 'String' }
+            Set-RegValueNet "$child\command" '' $item.Command 'String'
+        }
+    }
+    elseif ($Command) {
+        Set-RegValueNet "$root\command" '' $Command 'String'
+    }
+}
+
+Function New-ElevatedCmd {
+    #cmd.exe through UAC with FIXED arguments. $Arguments is pasted inside a single-quoted
+    #PowerShell string, so refuse anything that could close that string. Only constants are
+    #passed today; this is here so a future edit cannot quietly change that.
+    param([Parameter(Mandatory)][string]$Arguments)
+    if ($Arguments -match "['%]") { throw "New-ElevatedCmd: unsafe argument text '$Arguments'" }
+    return "powershell.exe -NoProfile -WindowStyle Hidden -Command ""Start-Process cmd.exe -Verb RunAs -ArgumentList '$Arguments'"""
+}
+
+Function New-PathSafeCmd {
+    #SECURITY - the fix for a proven command injection in the original ExtraTweaks verbs.
+    #Explorer substitutes %1 / %V as raw text. Pasting that text into PowerShell code ('...%1...')
+    #lets a file name containing a single quote end the string and run code: a downloaded file
+    #named  x';sc INJ.txt pwned;'.txt  made the old "Unblock" verb create INJ.txt, and for the
+    #elevated verbs the payload ran BEFORE the UAC prompt. Here the path never touches the code:
+    #  - powershell.exe appends trailing arguments to the -Command text, so that text ends in
+    #    '#' and the path lands in a comment (file names cannot contain newlines);
+    #  - the code reads the path back with [Environment]::GetCommandLineArgs()[-1], the OS argv
+    #    split, which is exact because a Windows path cannot contain '"'.
+    #%V can be a drive root (C:\) whose backslash would escape the closing quote, so it is passed
+    #as "%V\." - the same folder. Tested with ' & ! %OS% C:\ and a trailing \ in the name.
+    #$Code must not contain '"' (use [char]34): it sits inside the quoted -Command argument. It
+    #reads the path from $ET_PATH.
+    param(
+        [Parameter(Mandatory)][ValidateSet('%1', '%V')][string]$Token,
+        [string]$Options = '-NoProfile',
+        [Parameter(Mandatory)][string]$Code
+    )
+    if ($Code.Contains('"')) { throw 'New-PathSafeCmd: -Code must not contain double quotes; use [char]34' }
+    $pathArg = if ($Token -eq '%V') { '"%V\."' } else { '"%1"' }
+    return "powershell.exe $Options -Command ""`$ET_PATH = [Environment]::GetCommandLineArgs()[-1]; $Code #"" $pathArg"
+}
+
+Function SetClassicContextMenu {
+    #The Windows 10 right-click menu as the default, with every entry AddContextMenuTools adds
+    #one click closer. An empty InprocServer32 under the "File Explorer Context Menu" CLSID
+    #shadows HKLM's Windows.UI.FileExplorer.dll, the class cannot be created, and Explorer falls
+    #back to the classic menu.
+    #VERIFIED on 26200.9445 on 2026-10-22 with the value in the REAL HKCU: after an Explorer
+    #restart a plain right-click shows the classic menu. An earlier "26100+ ignores the shim"
+    #conclusion was wrong - those tests ran inside the Claude desktop app's virtualized HKCU
+    #(see REAL-HIVE CHECK above), so Explorer never saw the value.
+    #Per-user, and takes effect after the reboot or an Explorer restart.
+    Write-Host "Restoring the classic context menu. . ." -ForegroundColor Yellow
+    $build = [int](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name CurrentBuild).CurrentBuild
+    if ($build -lt 22000) {
+        Write-Host "  Windows 10 already uses the classic menu - nothing to do." -ForegroundColor Green
+        return
+    }
+    Set-RegValueNet 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32' '' '' 'String'
+    Write-Host "  shim set - applies after the reboot or an Explorer restart." -ForegroundColor Green
+    Write-Host "  To go back to the Windows 11 menu, from a normal (non-admin is fine) terminal:" -ForegroundColor DarkGray
+    Write-Host '    reg.exe delete "HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" /f' -ForegroundColor DarkGray
+    Write-Host '    then restart Explorer (or sign out and back in).' -ForegroundColor DarkGray
+}
+
+Function BlockAdsAndSuggestions {
+    #Protect-Privacy already covers the consumer-features policy and the ContentDeliveryManager
+    #app-install switches. These are the ad and suggestion slots it does not reach.
+    Write-Host "Blocking ads, tips and web suggestions. . ." -ForegroundColor Yellow
+    $cdm = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+    Set-RegValueNet $cdm 'RotatingLockScreenOverlayEnabled' 0          #lock screen "fun facts"
+    Set-RegValueNet $cdm 'SubscribedContent-338387Enabled' 0           #lock screen tips
+    Set-RegValueNet $cdm 'SubscribedContent-338388Enabled' 0           #Start suggestions
+    Set-RegValueNet $cdm 'SubscribedContent-338389Enabled' 0           #tips about Windows
+    Set-RegValueNet $cdm 'SubscribedContent-310093Enabled' 0           #welcome experience after updates
+    Set-RegValueNet $cdm 'SubscribedContent-338393Enabled' 0           #suggested content in Settings
+    Set-RegValueNet $cdm 'SubscribedContent-353694Enabled' 0
+    Set-RegValueNet $cdm 'SubscribedContent-353696Enabled' 0
+    #Left on deliberately, as in the Winaero export it came from: SubscribedContent-353698
+    #(timeline suggestions).
+    Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableSoftLanding' 1
+    #The File Explorer "sync provider" banner - it is used for OneDrive / Microsoft 365 adverts.
+    Set-RegValueNet 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ShowSyncProviderNotifications' 0
+    #Online tips and videos inside Settings.
+    Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Settings' 'AllowOnlineTips' 0
+    #"You have new apps that can open this type of file". The machine policy is the documented
+    #one; the per-user copy is what the reviewed ExtraTweaks script set and validated.
+    Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer' 'NoNewAppAlert' 1
+    Set-RegValueNet 'HKCU:\Software\Policies\Microsoft\Windows\Explorer' 'NoNewAppAlert' 1
+    #The "Learn about this picture" icon Spotlight drops on the desktop.
+    Set-RegValueNet 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel' '{2cc5ca98-6485-489a-920e-b3e88a6ccce3}' 1
+
+    #Web results in Start / search. Protect-Privacy sets BingSearchEnabled and DisableWebSearch;
+    #on Windows 11 22H2+ neither is enough on its own. DisableSearchBoxSuggestions is the one
+    #that actually removes them there.
+    Set-RegValueNet 'HKCU:\Software\Policies\Microsoft\Windows\Explorer' 'DisableSearchBoxSuggestions' 1
+    Set-RegValueNet 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' 'CortanaConsent' 0
+    Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search' 'ConnectedSearchUseWeb' 0
+    Write-Host "  done - Explorer-side ones apply after the reboot." -ForegroundColor Green
+}
+
+Function DisableTelemetryTasks {
+    #The telemetry pieces Protect-Privacy and DisableDiagTrackService do not cover.
+    #dmwappushservice is deliberately NOT disabled here - CheckDMWService turns it back on
+    #because Windows needs it, and the two would fight on every run.
+    Write-Host "Disabling the remaining telemetry tasks and feedback prompts. . ." -ForegroundColor Yellow
+    $dc = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection'
+    #Protect-Privacy only writes AllowTelemetry when this key already exists, and on a clean
+    #install it often does not - so the policy that matters most could be silently skipped.
+    #Written unconditionally here. On Home/Pro Windows floors it at 1 (Required) anyway.
+    Set-RegValueNet $dc 'AllowTelemetry' 0
+    Set-RegValueNet $dc 'DoNotShowFeedbackNotifications' 1
+    #Do not report infections back to Microsoft. DontOfferThroughWUAU (stop the Malicious
+    #Software Removal Tool being delivered at all) is NOT set: this script does not switch off
+    #security tooling, the same reason SmartScreen is left alone.
+    Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\MRT' 'DontReportInfectionInformation' 1
+
+    #Protect-Privacy already disables Consolidator, UsbCeip, DmClient and
+    #DmClientOnScenarioDownload. The appraiser task was renamed across builds - both names are
+    #listed and the missing one says so. '...Exp' is the current name on 26200 and runs the same
+    #compattelrunner.exe appraiser pass.
+    Disable-TaskIfPresent '\Microsoft\Windows\Application Experience\' 'Microsoft Compatibility Appraiser'
+    Disable-TaskIfPresent '\Microsoft\Windows\Application Experience\' 'Microsoft Compatibility Appraiser Exp'
+    Disable-TaskIfPresent '\Microsoft\Windows\Application Experience\' 'ProgramDataUpdater'
+    Disable-TaskIfPresent '\Microsoft\Windows\Autochk\' 'Proxy'
+}
+
+Function ApplySystemExtras {
+    Write-Host "Applying Explorer and system extras. . ." -ForegroundColor Yellow
+
+    #Navigation pane: hide OneDrive and Libraries. Only the two hidden entries are written - the
+    #Winaero export also listed Home, Gallery, This PC, Network and Linux as pinned, which is
+    #already the Windows default, so writing them would only create keys for nothing.
+    Set-RegValueNet 'HKCU:\Software\Classes\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}' 'System.IsPinnedToNameSpaceTree' 0
+    Set-RegValueNet 'HKCU:\Software\Classes\CLSID\{031E4825-7B94-4dc3-B131-E946B44C8DD5}' 'System.IsPinnedToNameSpaceTree' 0
+
+    #No "Look for an app in the Store" for unknown file types.
+    Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer' 'NoUseStoreOpenWith' 1
+    Set-RegValueNet 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer' 'NoUseStoreOpenWith' 1
+
+    #OneDrive may not offer to move Desktop / Documents / Pictures into the cloud.
+    Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\OneDrive' 'KFMBlockOptIn' 1
+    #Windows Ink Workspace off.
+    Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsInkWorkspace' 'AllowWindowsInkWorkspace' 0
+
+    #Power throttling off. On a desktop that is pure upside: Windows stops parking background
+    #work on efficiency cores / low clocks. On a LAPTOP it costs battery. Reboot to apply.
+    Set-RegValueNet 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling' 'PowerThrottlingOff' 1
+
+    #A blue screen shows the stop code parameters and drops the sad face. Reboot to apply.
+    Set-RegValueNet 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl' 'DisplayParameters' 1
+    Set-RegValueNet 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl' 'DisableEmoticon' 1
+
+    #Hide the Windows Insider page in Settings, and the preview-build opt-in behind it.
+    Add-SettingsPageHide -Page 'windowsinsider'
+    Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PreviewBuilds' 'AllowBuildPreview' 0
+
+    #Lift the one-restore-point-per-24-hours throttle permanently. GenSysRestorePoint lifts it
+    #only for its own checkpoint and then puts back whatever it found - after this, what it finds
+    #is 0, so the two agree. Trade-off: installers that create restore points can now create one
+    #every time, which uses more of the System Restore disk allowance.
+    Set-RegValueNet 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' 'SystemRestorePointCreationFrequency' 0
+
+    #Edge and Chrome stop re-creating their desktop shortcuts on every update.
+    Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate' 'CreateDesktopShortcutDefault' 0
+    Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate' 'RemoveDesktopShortcutDefault' 1
+    Set-RegValueNet 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer' 'DisableEdgeDesktopShortcutCreation' 1
+    Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Google\Update' 'CreateDesktopShortcutDefault' 0
+
+    #Hide the Start menu "Recommended" section. HideRecommendedSection is documented for
+    #Enterprise, Education and SE only - Home and Pro ignore it - so it is written on those
+    #editions alone rather than left as a dead value everywhere else. EditionID covers the N
+    #and LTSC variants (EnterpriseN, EnterpriseS...); SE reports CloudEdition. Sign out to apply.
+    $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name EditionID).EditionID
+    if ($edition -match '^(Enterprise|Education|CloudEdition)') {
+        Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer' 'HideRecommendedSection' 1
+        Set-RegValueNet 'HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\Start' 'HideRecommendedSection' 1
+        Write-Host "  $edition edition - Start ""Recommended"" section hidden (sign out to apply)." -ForegroundColor Green
+    }
+    else {
+        Write-Host "  $edition edition ignores the Start ""Recommended"" policy - not written." -ForegroundColor DarkGray
+    }
+
+    #Sign-in screen without the acrylic blur.
+    Set-RegValueNet 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' 'DisableAcrylicBackgroundOnLogon' 1
+    #Wallpapers imported at full JPEG quality instead of 85. Only affects a wallpaper set AFTER
+    #this - re-apply yours to see it.
+    Set-RegValueNet 'HKCU:\Control Panel\Desktop' 'JPEGImportQuality' 100
+    Write-Host "  done - power, crash-screen and Explorer changes apply after the reboot." -ForegroundColor Green
+}
+
+Function RestorePhotoViewer {
+    #Brings back Windows Photo Viewer as an "Open with" choice and a Default Apps entry.
+    #Registered per-user under HKCU\Software\Classes, not HKLM: the machine-wide
+    #PhotoViewer.FileAssoc.* keys are owned by TrustedInstaller and give Administrators read
+    #access only, so writing them fails even elevated (verified on 26200). HKCR merges HKCU over
+    #HKLM, so this works the same for this account.
+    #Windows blocks scripted default-app changes - you still pick it in Settings > Apps >
+    #Default apps.
+    Write-Host "Restoring Windows Photo Viewer. . ." -ForegroundColor Yellow
+    if (-not (Test-Path -LiteralPath "$env:ProgramFiles\Windows Photo Viewer\PhotoViewer.dll")) {
+        Write-Host "  PhotoViewer.dll is not on this machine - nothing to register." -ForegroundColor DarkYellow
+        return
+    }
+    $uc = 'HKCU:\Software\Classes'
+    $viewerCmd = '%SystemRoot%\System32\rundll32.exe "%ProgramFiles%\Windows Photo Viewer\PhotoViewer.dll", ImageView_Fullscreen %1'
+    $muiName   = '@%ProgramFiles%\Windows Photo Viewer\photoviewer.dll,-3043'
+    #The open and print verbs use DIFFERENT drop-target CLSIDs.
+    $openDrop  = '{FFE2A43C-56B9-4bf5-9A79-CC6D4285608A}'
+    $printDrop = '{60fd46de-f830-4894-a628-6fa81bc0190d}'
+
+    #1. The Applications entry, which is what populates "Open with".
+    $app = "$uc\Applications\photoviewer.dll"
+    Set-RegValueNet "$app\shell\open" 'MuiVerb' '@photoviewer.dll,-3043' 'String'
+    Set-RegValueNet "$app\shell\open\command" '' $viewerCmd 'ExpandString'
+    Set-RegValueNet "$app\shell\open\DropTarget" 'Clsid' $openDrop 'String'
+    Set-RegValueNet "$app\shell\print\command" '' $viewerCmd 'ExpandString'
+    Set-RegValueNet "$app\shell\print\DropTarget" 'Clsid' $printDrop 'String'
+
+    #2. The ProgIDs the viewer historically registered, each with its own icon. DefaultIcon has
+    #   to be REG_EXPAND_SZ for %SystemRoot% to resolve.
+    $progIds = [ordered]@{
+        'Tiff'   = '%SystemRoot%\System32\imageres.dll,-122'
+        'Jpeg'   = '%SystemRoot%\System32\imageres.dll,-72'
+        'Gif'    = '%SystemRoot%\System32\imageres.dll,-83'
+        'Png'    = '%SystemRoot%\System32\imageres.dll,-71'
+        'Bitmap' = '%SystemRoot%\System32\imageres.dll,-70'
+        'JFIF'   = '%SystemRoot%\System32\imageres.dll,-72'
+        'Wdp'    = '%SystemRoot%\System32\wmphoto.dll,-400'
+    }
+    foreach ($p in $progIds.Keys) {
+        $pk = "$uc\PhotoViewer.FileAssoc.$p"
+        Set-RegValueNet $pk 'ImageOptionFlags' 1
+        Set-RegValueNet $pk 'FriendlyTypeName' $muiName 'ExpandString'
+        Set-RegValueNet "$pk\DefaultIcon" '' $progIds[$p] 'ExpandString'
+        Set-RegValueNet "$pk\shell\open" 'MuiVerb' $muiName 'ExpandString'
+        Set-RegValueNet "$pk\shell\open\command" '' $viewerCmd 'ExpandString'
+        Set-RegValueNet "$pk\shell\open\DropTarget" 'Clsid' $openDrop 'String'
+    }
+
+    #3. Capabilities, so it shows up in Default Apps at all.
+    $caps = 'HKCU:\Software\Microsoft\Windows Photo Viewer\Capabilities'
+    Set-RegValueNet $caps 'ApplicationDescription' '@%ProgramFiles%\Windows Photo Viewer\photoviewer.dll,-3069' 'ExpandString'
+    Set-RegValueNet $caps 'ApplicationName' $muiName 'ExpandString'
+    $assoc = [ordered]@{
+        '.jpg' = 'Jpeg'; '.jpeg' = 'Jpeg'; '.jpe' = 'Jpeg'; '.jfif' = 'JFIF'
+        '.png' = 'Png';  '.bmp'  = 'Bitmap'; '.dib' = 'Bitmap'; '.gif' = 'Gif'
+        '.tif' = 'Tiff'; '.tiff' = 'Tiff'; '.wdp' = 'Wdp'; '.jxr' = 'Wdp'
+    }
+    foreach ($ext in $assoc.Keys) {
+        Set-RegValueNet "$caps\FileAssociations" $ext "PhotoViewer.FileAssoc.$($assoc[$ext])" 'String'
+    }
+    Set-RegValueNet 'HKCU:\Software\RegisteredApplications' 'Windows Photo Viewer' 'Software\Microsoft\Windows Photo Viewer\Capabilities' 'String'
+    Write-Host "  registered - pick it in Settings > Apps > Default apps if you want it as the default." -ForegroundColor Green
+}
+
+Function AddControlPanelWU {
+    #Puts a Windows Update icon back in Control Panel. On Windows 11 the applet itself hands
+    #over to Settings, so what this restores is the entry, not the old page.
+    Write-Host "Adding Windows Update to Control Panel. . ." -ForegroundColor Yellow
+    $clsid = '{36eef7db-88ad-4e81-ad49-0e313f0c35f8}'
+    $base  = "HKLM:\SOFTWARE\Classes\CLSID\$clsid"
+    Set-RegValueNet $base '' 'Windows Update' 'String'
+    Set-RegValueNet $base 'InfoTip' 'Check for updates' 'String'
+    Set-RegValueNet $base 'System.ApplicationName' 'Microsoft.WindowsUpdate' 'String'
+    Set-RegValueNet $base 'System.ControlPanel.Category' '5' 'String'
+    #wucltux.dll was the Windows 10 icon source and is gone on Windows 11 (verified absent on
+    #26200), which would leave a blank icon. wuaueng.dll ships on both.
+    Set-RegValueNet "$base\DefaultIcon" '' '%SystemRoot%\System32\wuaueng.dll,0' 'ExpandString'
+    Set-RegValueNet "$base\Shell\Open\Command" '' '%SystemRoot%\System32\control.exe /name Microsoft.WindowsUpdate' 'ExpandString'
+    Set-RegValueNet "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\$clsid" '' 'Windows Update' 'String'
+}
+
+Function Test-SecureStringEqual {
+    #Compares two SecureStrings without ever turning either into a managed string - those
+    #cannot be wiped and sit in memory until the garbage collector gets round to them. The
+    #unmanaged BSTR copies are compared in place and zeroed straight afterwards.
+    param([Parameter(Mandatory)][Security.SecureString]$A, [Parameter(Mandatory)][Security.SecureString]$B)
+    if ($A.Length -ne $B.Length) { return $false }
+    $pa = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($A)
+    $pb = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($B)
+    try {
+        for ($i = 0; $i -lt $A.Length; $i++) {
+            if ([Runtime.InteropServices.Marshal]::ReadInt16($pa, $i * 2) -ne [Runtime.InteropServices.Marshal]::ReadInt16($pb, $i * 2)) { return $false }
+        }
+        return $true
+    }
+    finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pa)
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pb)
+    }
+}
+
+Function EnableBuiltinAdmin {
+    #OPT-IN, and the only account change this script makes. The built-in Administrator (RID 500)
+    #is worth knowing about before saying yes:
+    #  - it ships with NO password, so enabling it bare hands full admin to anyone at the
+    #    keyboard - which is why this refuses to enable it without one;
+    #  - it runs with UAC filtering OFF by default, so everything it starts, malware included,
+    #    is fully elevated without a prompt;
+    #  - Store / UWP apps (the Xbox app and Game Pass among them) typically refuse to open
+    #    under it. Your own account is already an administrator through UAC.
+    #Blank answer, no console, or two mismatched entries three times = skipped, account left
+    #as it was. The password is read as a SecureString and never echoed or logged; the run
+    #transcript only records the prompt.
+    Write-Host "Built-in Administrator account (optional). . ." -ForegroundColor Yellow
+    $admin = Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $_.SID.Value -match '-500$' } | Select-Object -First 1
+    if (-not $admin) {
+        Write-Host "  Could not find the built-in Administrator account (RID 500) - skipped." -ForegroundColor DarkYellow
+        return
+    }
+    if ($admin.Enabled) {
+        Write-Host "  '$($admin.Name)' is already enabled - left exactly as it is." -ForegroundColor Green
+        return
+    }
+    Write-Host "  This enables '$($admin.Name)', the built-in Administrator. It runs EVERYTHING fully" -ForegroundColor DarkGray
+    Write-Host "  elevated with no UAC prompt, and Store apps (Xbox, Game Pass) may refuse to open" -ForegroundColor DarkGray
+    Write-Host "  under it. Your own account is already an admin. A password is required." -ForegroundColor DarkGray
+
+    $pw = $null
+    for ($try = 1; $try -le 3; $try++) {
+        #Invoke-Silently: Read-Host throws when there is no console, and that is an answer
+        #(skip), not a failure for Invoke-Step to count.
+        $first = Invoke-Silently { Read-Host -Prompt "  New password for '$($admin.Name)' (leave blank and press Enter to skip)" -AsSecureString }
+        if (-not $first -or $first.Length -eq 0) { break }
+        $second = Invoke-Silently { Read-Host -Prompt '  Type it again' -AsSecureString }
+        if ($second -and (Test-SecureStringEqual $first $second)) { $pw = $first; break }
+        Write-Host "  The two entries did not match." -ForegroundColor DarkYellow
+    }
+    if (-not $pw) {
+        Write-Host "  Skipped - '$($admin.Name)' stays disabled." -ForegroundColor Green
+        return
+    }
+
+    try {
+        #Password FIRST, enable second. If the password is refused (a local password policy,
+        #say), the account is never enabled with the blank one it ships with.
+        try { Set-LocalUser -SID $admin.SID -Password $pw -ErrorAction Stop }
+        catch {
+            Write-Host "  Password refused: $($_.Exception.Message) - '$($admin.Name)' stays disabled." -ForegroundColor DarkYellow
+            return
+        }
+        try {
+            Enable-LocalUser -SID $admin.SID -ErrorAction Stop
+            Write-Host "  '$($admin.Name)' enabled with the password you set." -ForegroundColor Green
+            Write-Host "  To turn it off again, from an admin terminal:  Disable-LocalUser -SID $($admin.SID.Value)" -ForegroundColor DarkGray
+        }
+        catch { Write-Host "  Password set, but the account could not be enabled: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+    }
+    finally {
+        $pw.Dispose()
+        if ($second) { $second.Dispose() }
+    }
+}
+
+Function AddContextMenuTools {
+    #Right-click tools. Every verb that receives a file or folder path builds its command with
+    #New-PathSafeCmd, so a name containing ' & ! or % cannot run code (see that function).
+    #The remaining verbs pass the path only as a quoted argument to a real executable.
+    Write-Host "Adding context menu tools. . ." -ForegroundColor Yellow
+    $classes = 'HKLM:\SOFTWARE\Classes'
+    $dbg     = "$classes\DesktopBackground\Shell"
+    $dirbg   = "$classes\Directory\Background\shell"
+    #.ps1 verbs go under SystemFileAssociations, NOT the Microsoft.PowerShellScript.1 ProgID.
+    #That ProgID does not exist on current Windows 11 builds (.ps1 resolves through an AppX
+    #UserChoice instead), so verbs written there would never appear.
+    $ps1     = "$classes\SystemFileAssociations\.ps1\Shell"
+
+    #Encrypt / Decrypt (EFS) on the file menu.
+    Set-RegValueNet 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'EncryptionContextMenu' 1
+
+    #Admin consoles on the desktop and folder background, opening in that folder.
+    #-WorkingDirectory rather than 'cd /d "%V"': %V can end in a backslash at a drive root, which
+    #would escape the closing quote of a nested argument.
+    $cmdAdmin = New-PathSafeCmd -Token '%V' -Options '-NoProfile -WindowStyle Hidden' `
+        -Code 'Start-Process cmd.exe -Verb RunAs -WorkingDirectory $ET_PATH'
+    $psAdmin  = New-PathSafeCmd -Token '%V' -Options '-NoProfile -WindowStyle Hidden' `
+        -Code 'Start-Process powershell.exe -Verb RunAs -ArgumentList ''-NoExit'' -WorkingDirectory $ET_PATH'
+    foreach ($parent in @($dbg, $dirbg)) {
+        Add-ShellVerb -ParentPath $parent -KeyName 'WinaeroCmdAsAdmin' -Label 'Command Prompt (Administrator)' `
+            -Command $cmdAdmin -Icon 'cmd.exe' -LuaShield
+        Add-ShellVerb -ParentPath $parent -KeyName 'WinaeroPSAsAdmin' -Label 'Windows PowerShell (Run as Administrator)' `
+            -Command $psAdmin -Icon 'powershell.exe' -LuaShield
+    }
+
+    #Desktop-only tools.
+    Add-ShellVerb -ParentPath $dbg -KeyName 'WinaeroKillNotResponding' -Label 'Kill not responding tasks' `
+        -Icon 'taskmgr.exe' -Command 'cmd.exe /c taskkill.exe /f /fi "status eq not responding"'
+    Add-ShellVerb -ParentPath $dbg -KeyName 'WinaeroTaskManager' -Label 'Task Manager' -Icon 'taskmgr.exe' -Command 'taskmgr.exe'
+    Add-ShellVerb -ParentPath $dbg -KeyName 'WinaeroClipboardHistory' -Label 'Clipboard History' -Icon 'imageres.dll,-5377' -SubItems @(
+        @{ Label = 'Turn on';  Command = 'reg.exe add "HKCU\Software\Microsoft\Clipboard" /v EnableClipboardHistory /t REG_DWORD /d 1 /f' }
+        @{ Label = 'Turn off'; Command = 'reg.exe add "HKCU\Software\Microsoft\Clipboard" /v EnableClipboardHistory /t REG_DWORD /d 0 /f' }
+        @{ Label = 'Open clipboard settings'; Command = 'explorer.exe ms-settings:clipboard' }
+    )
+    Add-ShellVerb -ParentPath $dbg -KeyName 'WinaeroSfcScannow' -Label 'Run sfc /scannow' -Icon 'imageres.dll,-78' -LuaShield `
+        -Command (New-ElevatedCmd -Arguments '/k sfc.exe /scannow')
+    Add-ShellVerb -ParentPath $dbg -KeyName 'WinaeroDismRestoreHealth' -Label 'Repair Windows image (DISM /RestoreHealth)' `
+        -Icon 'imageres.dll,-78' -LuaShield -Command (New-ElevatedCmd -Arguments '/k DISM.exe /Online /Cleanup-Image /RestoreHealth')
+    #Shift+right-click ONLY (-Extended). The command is an immediate forced reboot with no
+    #confirmation and discards unsaved work - not something to sit one stray click away.
+    Add-ShellVerb -ParentPath $dbg -KeyName 'WinaeroAdvancedStartup' -Label 'Restart to Advanced Startup Options' `
+        -Icon 'imageres.dll,-110' -LuaShield -Extended `
+        -Command 'powershell.exe -NoProfile -WindowStyle Hidden -Command "Start-Process shutdown.exe -Verb RunAs -ArgumentList ''/r'',''/o'',''/f'',''/t'',''0''"'
+    #A curated applet list, not a byte-for-byte copy of Winaero's menu.
+    Add-ShellVerb -ParentPath $dbg -KeyName 'WinaeroControlPanel' -Label 'Control Panel' -Icon 'control.exe' -Position 'Top' -SubItems @(
+        @{ Label = 'All Control Panel Items';    Command = 'control.exe /name Microsoft.AllControlPanelItems';    Icon = 'control.exe' }
+        @{ Label = 'Programs and Features';      Command = 'control.exe /name Microsoft.ProgramsAndFeatures';     Icon = 'appwiz.cpl' }
+        @{ Label = 'Network Connections';        Command = 'control.exe ncpa.cpl';                                 Icon = 'ncpa.cpl' }
+        @{ Label = 'Network and Sharing Center'; Command = 'control.exe /name Microsoft.NetworkAndSharingCenter';  Icon = 'ncpa.cpl' }
+        @{ Label = 'Device Manager';             Command = 'mmc.exe devmgmt.msc';                                  Icon = 'devmgr.dll' }
+        @{ Label = 'Devices and Printers';       Command = 'control.exe /name Microsoft.DevicesAndPrinters';       Icon = 'printui.dll' }
+        @{ Label = 'Power Options';              Command = 'control.exe /name Microsoft.PowerOptions';             Icon = 'powercpl.dll' }
+        @{ Label = 'Sound';                      Command = 'control.exe mmsys.cpl';                                Icon = 'mmsys.cpl' }
+        @{ Label = 'System';                     Command = 'control.exe /name Microsoft.System';                   Icon = 'shell32.dll,-16' }
+        @{ Label = 'Advanced System Settings';   Command = 'SystemPropertiesAdvanced.exe';                         Icon = 'shell32.dll,-16' }
+        @{ Label = 'User Accounts';              Command = 'control.exe /name Microsoft.UserAccounts';             Icon = 'imageres.dll,-77' }
+        @{ Label = 'Credential Manager';         Command = 'control.exe /name Microsoft.CredentialManager';        Icon = 'imageres.dll,-73' }
+        @{ Label = 'Windows Tools';              Command = 'control.exe /name Microsoft.AdministrativeTools';      Icon = 'imageres.dll,-114' }
+        @{ Label = 'File Explorer Options';      Command = 'control.exe folders';                                  Icon = 'imageres.dll,-112' }
+        @{ Label = 'Region';                     Command = 'control.exe intl.cpl';                                 Icon = 'intl.cpl' }
+        @{ Label = 'Date and Time';              Command = 'control.exe timedate.cpl';                             Icon = 'timedate.cpl' }
+        @{ Label = 'Mouse';                      Command = 'control.exe main.cpl';                                 Icon = 'main.cpl' }
+        @{ Label = 'Windows Defender Firewall';  Command = 'control.exe firewall.cpl';                             Icon = 'firewall.cpl' }
+        @{ Label = 'Disk Management';            Command = 'mmc.exe diskmgmt.msc';  Icon = 'dmdskres.dll'; LuaShield = $true }
+        @{ Label = 'Services';                   Command = 'mmc.exe services.msc';  Icon = 'filemgmt.dll'; LuaShield = $true }
+    )
+
+    #Take Ownership. The elevated cmd line is built from $ET_PATH with -f; [char]34 supplies the
+    #quotes, since no '"' may appear inside the -Command text. Inside those quotes cmd treats &
+    #etc. literally ('%' can still expand, but only ever into a wrong path, never a command).
+    #Ownership goes to OWNER RIGHTS (*S-1-3-4), not to a named account.
+    $ownFile = New-PathSafeCmd -Token '%1' -Options '-NoProfile -WindowStyle Hidden' `
+        -Code 'Start-Process cmd.exe -Verb RunAs -ArgumentList (''/d /c takeown /f {0}{1}{0} && icacls {0}{1}{0} /grant *S-1-3-4:F /c /l'' -f [char]34,$ET_PATH)'
+    $ownDir  = New-PathSafeCmd -Token '%1' -Options '-NoProfile -WindowStyle Hidden' `
+        -Code 'Start-Process cmd.exe -Verb RunAs -ArgumentList (''/d /c takeown /f {0}{1}{0} /r /d y && icacls {0}{1}{0} /grant *S-1-3-4:F /t /c /l /q'' -f [char]34,$ET_PATH)'
+    Add-ShellVerb -ParentPath "$classes\*\shell" -KeyName 'WinaeroTakeOwnership' -Label 'Take Ownership' `
+        -Icon 'imageres.dll,-78' -LuaShield -Command $ownFile
+    Add-ShellVerb -ParentPath "$classes\Directory\shell" -KeyName 'WinaeroTakeOwnership' -Label 'Take Ownership' `
+        -Icon 'imageres.dll,-78' -LuaShield -Command $ownDir
+
+    #Unblock a downloaded file (drops its Mark of the Web).
+    Add-ShellVerb -ParentPath "$classes\*\shell" -KeyName 'WinaeroUnblockFile' -Label 'Unblock' -Icon 'imageres.dll,-1401' `
+        -Command (New-PathSafeCmd -Token '%1' -Options '-NoProfile -WindowStyle Hidden' -Code 'Unblock-File -LiteralPath $ET_PATH')
+
+    #View owner, for files and folders.
+    $owner = New-PathSafeCmd -Token '%1' -Options '-NoProfile -NoExit' `
+        -Code 'Write-Host $ET_PATH; Get-Acl -LiteralPath $ET_PATH | Format-List Owner,Group,Path'
+    Add-ShellVerb -ParentPath "$classes\*\shell" -KeyName 'WinaeroViewOwner' -Label 'View owner' -Icon 'imageres.dll,-77' -Command $owner
+    Add-ShellVerb -ParentPath "$classes\Directory\shell" -KeyName 'WinaeroViewOwner' -Label 'View owner' -Icon 'imageres.dll,-77' -Command $owner
+
+    #File hash, cascading.
+    $hashes = foreach ($alg in 'MD5', 'SHA1', 'SHA256', 'SHA384', 'SHA512') {
+        @{
+            Label   = $alg
+            Command = New-PathSafeCmd -Token '%1' -Options '-NoProfile -NoExit' `
+                -Code "Get-FileHash -LiteralPath `$ET_PATH -Algorithm $alg | Format-List Algorithm,Hash,Path"
+        }
+    }
+    Add-ShellVerb -ParentPath "$classes\*\shell" -KeyName 'WinaeroFileHash' -Label 'Hash' -Icon 'imageres.dll,-5301' -SubItems $hashes
+
+    #Extract an MSI's contents (administrative install into <file>.extracted).
+    Add-ShellVerb -ParentPath "$classes\Msi.Package\shell" -KeyName 'WinaeroExtractMsi' -Label 'Extract contents' -Icon 'msiexec.exe' `
+        -Command 'cmd.exe /c mkdir "%1.extracted" & msiexec.exe /a "%1" /qb TARGETDIR="%1.extracted"'
+
+    #Run as administrator for .msi and .vbs: they have real ProgIDs, so the canonical 'runas'
+    #verb works and the shell does the elevating.
+    Set-RegValueNet "$classes\Msi.Package\shell\runas" 'HasLUAShield' '' 'String'
+    Set-RegValueNet "$classes\Msi.Package\shell\runas\command" '' 'msiexec.exe /i "%1" %*' 'String'
+    Set-RegValueNet "$classes\VBSFile\shell\runas" 'HasLUAShield' '' 'String'
+    Set-RegValueNet "$classes\VBSFile\shell\runas\command" '' 'wscript.exe "%1" %*' 'String'
+
+    #.ps1 entries. Windows already supplies 'Edit' and 'Run with PowerShell'; these use distinct
+    #key names so nothing built in is overwritten. -ExecutionPolicy Bypass is per-process: it
+    #lets the script you right-clicked run without changing the machine policy.
+    Add-ShellVerb -ParentPath $ps1 -KeyName 'WinaeroRunAsAdmin' -Label 'Run as administrator' -Icon 'powershell.exe' -LuaShield `
+        -Command (New-PathSafeCmd -Token '%1' -Options '-NoProfile -WindowStyle Hidden' `
+            -Code 'Start-Process powershell.exe -Verb RunAs -ArgumentList ''-NoProfile'',''-ExecutionPolicy'',''Bypass'',''-NoExit'',''-File'',([char]34+$ET_PATH+[char]34)')
+    Add-ShellVerb -ParentPath $ps1 -KeyName 'WinaeroModify' -Label 'Modify' -Icon 'notepad.exe' -Command 'notepad.exe "%1"'
+    Add-ShellVerb -ParentPath $ps1 -KeyName 'WinaeroRunPS5' -Label 'Run with Windows PowerShell (keep open)' -Icon 'powershell.exe' `
+        -Command 'powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File "%1"'
+    if (-not (Invoke-Silently -AsBool { Get-Command pwsh.exe -ErrorAction Stop })) {
+        Write-Host "  PowerShell 7 is not installed - its two .ps1 entries are added anyway and start working once it is." -ForegroundColor DarkYellow
+    }
+    Add-ShellVerb -ParentPath $ps1 -KeyName 'WinaeroRunPS7' -Label 'Run with PowerShell 7' -Icon 'pwsh.exe' `
+        -Command 'pwsh.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File "%1"'
+    Add-ShellVerb -ParentPath $ps1 -KeyName 'WinaeroRunPS7Admin' -Label 'Run with PowerShell 7 (Administrator)' -Icon 'pwsh.exe' -LuaShield `
+        -Command (New-PathSafeCmd -Token '%1' -Options '-NoProfile -WindowStyle Hidden' `
+            -Code 'Start-Process pwsh.exe -Verb RunAs -ArgumentList ''-NoProfile'',''-ExecutionPolicy'',''Bypass'',''-NoExit'',''-File'',([char]34+$ET_PATH+[char]34)')
+    Write-Host "  done - on Windows 11 they sit on the classic menu (SetClassicContextMenu), otherwise under Show more options." -ForegroundColor Green
+}
+
 ################################################################################################################################################################################################################################################################################################################################
 ################################################################################################################################################################################################################################################################################################################################
 ################################################################################################################################################################################################################################################################################################################################
@@ -3062,6 +3774,10 @@ Function TuneSchedulerAndTimer {
 ################################################################################################################################################################################################################################################################################################################################
 ################################################################################################################################################################################################################################################################################################################################
 ################################################################################################################################################################################################################################################################################################################################
+
+#ADDED: before anything prints or changes - see REAL-HIVE CHECK. Stops (or asks) when HKCU is
+#not the signed-in user's own registry, which would make every per-user tweak a silent no-op.
+Confirm-RealUserHive
 
 #Hi :) you're beautiful
 CleanMemoryy
@@ -3201,7 +3917,7 @@ $script:MNNSSMBlocklist = @'
 # Please forward any additions, corrections or comments by email to
 # hosts@someonewhocares.org
 
-# Last updated: Fri, 18 Sep 2026 at 19:29:33 GMT
+# Last updated: Thu, 15 Oct 2026 at 17:57:51 GMT
 
 # Use this file to prevent your computer from connecting to selected
 # internet hosts. This is an easy and effective way to protect you from 
@@ -4772,6 +5488,7 @@ ff02::3		ip6-allhosts
 0.0.0.0 askbot.com
 0.0.0.0 askto.net
 0.0.0.0 askubal.fr
+0.0.0.0 assistance.app-claude-ai.online
 0.0.0.0 assistcom.fr
 0.0.0.0 assodigitale.fr
 0.0.0.0 ast-grouope.fr
@@ -6107,6 +6824,7 @@ ff02::3		ip6-allhosts
 0.0.0.0 refund-int3rac.com
 0.0.0.0 regclassboard.com
 0.0.0.0 reliezvous.fr
+0.0.0.0 reminderannual2reward.com
 0.0.0.0 renacious.nwwadq.cn
 0.0.0.0 renov-landes.fr
 0.0.0.0 rentacars.fr
@@ -11499,6 +12217,7 @@ ff02::3		ip6-allhosts
 0.0.0.0 edchargina.pro
 0.0.0.0 eddy.noneto.com
 0.0.0.0 edge.bnmla.com
+0.0.0.0 edge.cuddlybeside.com
 0.0.0.0 edge.quantserve.com
 0.0.0.0 edgecast-vod.yimg.com
 0.0.0.0 edirect.hotkeys.com
@@ -16886,7 +17605,7 @@ exit /b
 ::  Target list - called twice: once to scan, once to clean
 :: ============================================================
 :AllTargets
-call :CleanDir "%TEMP%"                                             "User temp"
+call :CleanTemp
 call :CleanDir "%LOCALAPPDATA%\Temp"                                "User temp (alt)"
 call :CleanDir "%SystemRoot%\Temp"                                  "System temp"
 call :CleanDir "%SystemRoot%\SoftwareDistribution\Download"         "Windows Update cache"
@@ -16908,10 +17627,28 @@ goto :eof
 ::  Subroutines
 :: ============================================================
 
+:CleanTemp
+:: %TEMP% is the one target whose whole path is user-configurable, so it is only
+:: cleaned when its last folder is named Temp or Tmp. Anything else - a custom
+:: scratch folder, a per-session \Temp\2 - is left alone. %LOCALAPPDATA%\Temp
+:: is its own target and is cleaned either way.
+set "_T=%TEMP%"
+if "%_T:~-1%"=="\" set "_T=%_T:~0,-1%"
+set "_TL="
+for %%T in ("%_T%") do set "_TL=%%~nxT"
+if /i not "%_TL%"=="Temp" if /i not "%_TL%"=="Tmp" (
+    call :Log "  REFUSED (TEMP is not a Temp or Tmp folder): %TEMP%"
+    goto :eof
+)
+call :CleanDir "%TEMP%" "User temp"
+goto :eof
+
+
 :CleanDir
 :: %1 = folder, %2 = label for the table.
 :: Deletes the CONTENTS of a folder (files and subfolders), not the folder.
-:: Refuses empty paths, drive roots, critical dirs and browser profiles.
+:: Refuses empty paths, drive roots and critical dirs.
+:: Only the fixed cache folders in :AllTargets are ever passed in.
 if "%~1"=="" goto :eof
 set "_CD=%~f1"
 set "_LBL=%~2"
@@ -16919,7 +17656,7 @@ if "%_CD:~3%"=="" (
     call :Log "  REFUSED (drive root): %_CD%"
     goto :eof
 )
-for %%X in ("%SystemRoot%" "%SystemRoot%\System32" "%SystemDrive%\Users" "%ProgramFiles%" "%PF86%" "%ProgramData%" "%USERPROFILE%" "%LOCALAPPDATA%" "%APPDATA%" "%LOCALAPPDATA%\Google" "%LOCALAPPDATA%\Google\Chrome" "%LOCALAPPDATA%\Google\Chrome\User Data" "%LOCALAPPDATA%\Microsoft\Edge" "%LOCALAPPDATA%\Microsoft\Edge\User Data" "%LOCALAPPDATA%\BraveSoftware" "%LOCALAPPDATA%\Vivaldi" "%APPDATA%\Mozilla" "%APPDATA%\Opera Software") do (
+for %%X in ("%SystemRoot%" "%SystemRoot%\System32" "%SystemDrive%\Users" "%ProgramFiles%" "%PF86%" "%ProgramData%" "%USERPROFILE%" "%LOCALAPPDATA%" "%APPDATA%") do (
     if /i "%_CD%"=="%%~fX" (
         call :Log "  REFUSED (protected): %_CD%"
         goto :eof
@@ -17057,8 +17794,7 @@ goto :eof
 set "BROWSING="
 for /f "usebackq delims=" %%B in (`powershell -NoProfile -Command "$n=@(Get-Process chrome,msedge,firefox,brave,opera,vivaldi -EA SilentlyContinue); if ($n.Count) { $g=@(); foreach ($p in $n) { if ($g -notcontains $p.ProcessName) { $g+=$p.ProcessName } }; $g -join ', ' }"`) do set "BROWSING=%%B"
 if not defined BROWSING goto :eof
-echo     NOTE: browser running (%BROWSING%). Profiles, bookmarks and
-echo     passwords are never touched, but your temp folder holds
+echo     NOTE: browser running (%BROWSING%). Your temp folder holds
 echo     in-progress downloads. Close it first if one is running.
 echo.
 goto :eof
@@ -18651,6 +19387,21 @@ Invoke-Step "Disabling Windows Copilot"              { DisableCopilot } -Spin
 Invoke-Step "Muzzling Edge telemetry"                { HardenEdgeTelemetry } -Spin
 Invoke-Step "Reclaiming disk space"                  { ReclaimDiskSpace }
 Invoke-Step "Setting visual effects to performance"  { SetVisualEffectsPerformance } -Spin
+
+#ADDED: the reviewed ExtraTweaks set (Winaero Tweaker export, native settings only). Last on
+#purpose: everything here is additive, and none of it should run before the debloat and the
+#existing privacy steps have settled. See EXTRA TWEAKS and FEATURES.md ADDENDUM 7.
+Invoke-Step "Blocking ads, tips and web suggestions"  { BlockAdsAndSuggestions } -Spin
+Invoke-Step "Disabling remaining telemetry tasks"     { DisableTelemetryTasks } -Spin
+Invoke-Step "Applying Explorer and system extras"     { ApplySystemExtras } -Spin
+Invoke-Step "Restoring Windows Photo Viewer"          { RestorePhotoViewer } -Spin
+Invoke-Step "Adding Windows Update to Control Panel"  { AddControlPanelWU } -Spin
+Invoke-Step "Adding context menu tools"               { AddContextMenuTools } -Spin
+Invoke-Step "Restoring the classic context menu"      { SetClassicContextMenu } -Spin
+
+#ADDED: opt-in, interactive, and deliberately the LAST step - you answer it once and walk away,
+#and a blank answer (or no console) skips it. No -Spin: the spinner would fight the prompt.
+Invoke-Step "Built-in Administrator account (optional)" { EnableBuiltinAdmin }
 
 Write-Host "Unloading the HKCR drive..." -ForegroundColor Yellow
 Remove-PSDrive HKCR -ErrorAction SilentlyContinue

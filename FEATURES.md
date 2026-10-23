@@ -29,7 +29,7 @@ A full transcript of every run lands in `C:\Temp\WindowsDebloat&Optimize`.
 
 ---
 
-## THE STEPS  (44 at time of writing; 46 now - see addenda)
+## THE STEPS  (44 at time of writing; 54 now - see addenda)
 
 ### Preparation
   1.  Building Desktop tools + God Mode
@@ -147,7 +147,8 @@ that is the failure mode that strands a machine.
   - Idempotent: verified across consecutive runs with zero registry, AppX,
     DNS or scheduled-task drift
   - No remote code execution, no downloads, no base64, no Defender tampering,
-    no ACL changes, no account changes, no disk or partition operations
+    no ACL changes, no disk or partition operations, and no account changes
+    unless you opt in at the last step (ADDENDUM 7)
   - Exactly one -Recurse delete in the whole script, guarded by Test-Path
   - A SYSTEM fallback for provisioned-package removal, using a transient
     scheduled task that unregisters itself in a finally block
@@ -156,14 +157,23 @@ that is the failure mode that strands a machine.
 
 ## KNOWN LIMITS - READ BEFORE A LIVE MACHINE
 
-  1. AMSI FALSE POSITIVE, WORKED AROUND. Windows Defender flags the script as
-     Trojan:BAT/CryptoDrainer.C!MTB when the hosts blocklist and the embedded
-     cleanup .bat share one file. Either half alone is clean. With real-time
-     protection ON - the default after a reformat - the script is refused at
-     parse time and does not run. The companion-file variant in AMSIfix\ now does
-     exactly that, so by the leave-one-out result above it should scan clean -
-     but that has not been re-verified against a live Defender install. The
-     single-file form is affected either way.
+  1. RESOLVED 2026-10-21 (by observation - cause not proven) - was: Defender
+     refused the script through AMSI as Trojan:BAT/CryptoDrainer.C!MTB, before
+     anything ran. Two edits to the embedded cleanup .bat were made together:
+     the nine browser-folder entries in :CleanDir's exact-match guard were
+     removed, and the "browser running" note no longer mentions profiles,
+     bookmarks or passwords. Under signatures 1.461.140.0 the inert scan test
+     passes while the pre-edit file is still refused by the same test, and a
+     full real run (2026-10-21 15:05, believed to be the edited file) logged no
+     detection. Removing the browser entries opened a gap: a %TEMP% set to
+     exactly one of those folders would have been cleaned. Closed the same day
+     by :CleanTemp - %TEMP% is now only cleaned when its last folder is named
+     Temp or Tmp (custom folders like D:\Scratch are skipped; a per-session
+     ...\Temp\2 is still covered by the %LOCALAPPDATA%\Temp target). Scans
+     clean under the same test. See AV-evidence-2026-10-21\README.md. Which edit mattered,
+     which Defender component decided, and why it chose that label are NOT
+     known. Evidence and test harness: AV-evidence-2026-10-21\. Re-run
+     scan-harness.ps1 after big changes. AMSIfix\ is no longer needed.
 
   2. NEVER TESTED ON REAL HARDWARE. Validated across 13 runs on a VMware guest
      only. The bcdedit boot-timer settings in particular are unverified against
@@ -889,3 +899,216 @@ it silently truncated the else branch and lost the "cleanup_main.bat.txt is not 
 this script" warning. The file still parsed, which is why a parse check did not catch
 it. Use explicit line boundaries, and verify by counting: the loader block is 26 lines,
 and the variant must differ from this file in exactly ONE hunk.
+
+---
+
+# ADDENDUM 7 - EXTRA TWEAKS MERGED IN (2026-10-22)
+
+704,895 bytes / 19,573 lines / 79 functions / 54 steps.
+NOT YET RUN as a whole - see "STILL TO VERIFY" at the end.
+
+## WHAT THIS IS
+
+The ExtraTweaks folder held a separate script, Apply-WinaeroTweaks.ps1, that
+reproduced a Winaero Tweaker export (44 tweaks) as native registry, service and task
+changes. It was reviewed and fixed on 2026-10-22. This script is meant to be the one
+thing you run after a reformat, so everything that script did that this one did not
+already do now lives here, as eight ordinary Invoke-Step steps at the end of the run:
+
+  47. Blocking ads, tips and web suggestions    lock screen, Start, Settings ads;
+                                                soft landing; sync-provider banner;
+                                                "new app" alert; Spotlight icon;
+                                                DisableSearchBoxSuggestions
+  48. Disabling remaining telemetry tasks       appraiser (both names), ProgramDataUpdater,
+                                                Autochk Proxy; feedback prompts; MRT
+                                                infection reporting
+  49. Applying Explorer and system extras       OneDrive + Libraries out of the nav pane,
+                                                no Store lookup for unknown types, OneDrive
+                                                folder backup blocked, Ink off, power
+                                                throttling off, BSOD details, Insider page
+                                                hidden, restore-point throttle off, Edge /
+                                                Chrome desktop shortcuts, logon blur off,
+                                                JPEG wallpaper quality 100, Start
+                                                "Recommended" hidden (Enterprise /
+                                                Education / SE only)
+  50. Restoring Windows Photo Viewer            per-user, Open with + Default apps
+  51. Adding Windows Update to Control Panel
+  52. Adding context menu tools                 16 entries - see below
+  53. Restoring the classic context menu        Windows 10 right-click menu on Windows 11
+  54. Built-in Administrator account (optional) OPT-IN prompt, password required -
+                                                see below
+
+Context menu tools: Command Prompt and PowerShell as admin (desktop and folder
+background), Kill not responding, Task Manager, Clipboard History, sfc /scannow,
+DISM /RestoreHealth, Advanced Startup (Shift+right-click only - it is an immediate
+forced reboot), a Control Panel cascade, Take Ownership, Unblock, View owner, a Hash
+cascade (MD5 to SHA512), Extract MSI, Run as administrator for .msi / .vbs / .ps1,
+and Modify / Run with PowerShell 5 / PowerShell 7 (admin and not) for .ps1. Plus
+Encrypt / Decrypt.
+
+## THE CLASSIC MENU WORKS - AND WHY IT LOOKED LIKE IT DID NOT
+
+The shim is an empty InprocServer32 under HKCU CLSID
+{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}. For weeks it appeared to do nothing on 26200,
+and the review first concluded that 24H2+ ignores it. That was wrong. Every test had
+been run from inside the Claude desktop app, which is an MSIX package: its child
+processes - elevated ones included - see HKCU merged with the app's private hive and
+write into that hive. Explorer never saw the value. Written to the real HKCU and
+followed by an Explorer restart, the classic menu appears with every added entry.
+Verified on 26200.9445.
+
+To undo it, from a normal terminal (no admin needed):
+
+    reg.exe delete "HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" /f
+
+then restart Explorer or sign out. The step prints the same command.
+
+## NEW: REAL-HIVE CHECK (runs first, before the banner)
+
+That MSIX finding applies to every HKCU tweak in this script, not just the menu, so it
+is now checked once at the start. Confirm-RealUserHive stops and asks before anything
+changes when:
+
+  - HKCU is virtualized. Detected by comparing the HKCU subkey names this process sees
+    with what a powershell.exe started fresh through WMI sees - same user, same hive,
+    so they only differ when one side is looking at an overlay. Package identity
+    cannot be used: GetCurrentPackageFullName reports "no package" from inside that
+    shell. The probe is passed as plain text, not -EncodedCommand, and writes its
+    answer to the log folder (C:\Temp is outside anything an MSIX app redirects).
+  - The elevated account is not the desktop user (over-the-shoulder UAC with another
+    admin's password). HKCU would then be that admin's hive.
+
+Type yes to carry on anyway. Anything else, or no console at all, stops with nothing
+changed. If the WMI probe itself fails, it says so and carries on.
+
+## SECURITY: THE CONTEXT MENU INJECTION FIX CAME WITH IT
+
+The original ExtraTweaks verbs pasted %1 / %V inside '...' in PowerShell code, so a file
+named  x';sc INJ.txt pwned;'.txt  ran code when you clicked Unblock - proven on the VM.
+For the elevated verbs it ran before the UAC prompt. New-PathSafeCmd passes the path as
+a separate quoted argument after a '#' and reads it back with
+[Environment]::GetCommandLineArgs()[-1], so the name never reaches the parser. Tested
+on the VM with ' & ! %OS% C:\ and a trailing backslash. The generated command strings
+are byte-identical to the reviewed script's.
+
+## WHY A SECOND REGISTRY WRITER
+
+Set-RegValue goes through the PowerShell provider. Set-RegValueNet uses the .NET API,
+because the provider cannot create a key literally named '*' (HKLM\SOFTWARE\Classes\*\
+shell - it is a wildcard there), and because several values are deliberately an EMPTY
+string. reg.exe is no answer for those: Windows PowerShell 5.1 drops "" when passing
+arguments to a native exe. A failed write prints and stays in $Error, so the step
+reports PARTIAL rather than OK.
+
+## THE BUILT-IN ADMINISTRATOR IS OPT-IN, AND NEEDS A PASSWORD
+
+Step 54, deliberately last so it is the one thing you answer before walking away.
+It asks for a new password for the RID-500 account ("leave blank and press Enter to
+skip"), asks for it again, and only then sets the password and enables the account -
+in that order, so a refused password never leaves it enabled with the blank one it
+ships with. Blank, no console, or three mismatched pairs = skipped, nothing changed.
+Already enabled = left exactly as it is. The password is read as a SecureString,
+never echoed or logged, and the two entries are compared in unmanaged memory that is
+zeroed straight afterwards. The step prints how to turn it off again
+(Disable-LocalUser -SID ...-500).
+
+Worth knowing before typing a password: that account runs everything fully elevated
+with no UAC prompt, and Store / UWP apps (Xbox, Game Pass) typically refuse to open
+under it. Your own account is already an administrator through UAC.
+
+## LEFT OUT, ON PURPOSE
+
+  Already done here       background apps, error reporting, Copilot, DiagTrack, the
+                          CEIP/Siuf tasks, consumer features, the CDM app-install
+                          switches, BingSearchEnabled, DisableWebSearch
+  dmwappushservice off    CheckDMWService turns it back ON because Windows needs it.
+                          Adding both would have them fight on every run.
+  Windows Update -> notify before download
+                          Delays security patches on a machine that will not be
+                          watched. This script has never touched Windows Update.
+  MRT DontOfferThroughWUAU
+                          Stops the Malicious Software Removal Tool being delivered.
+                          This script does not switch off security tooling - the same
+                          reason SmartScreen is left alone. Infection REPORTING is off.
+  Start "Recommended" policy ON HOME / PRO
+                          HideRecommendedSection is documented for Enterprise,
+                          Education and SE only, so ApplySystemExtras checks EditionID
+                          and writes it on those editions alone (sign out to apply).
+                          Home and Pro print that it was skipped.
+  Nav pane "pinned" items Five of the seven export entries are already the Windows
+                          default; only OneDrive and Libraries (hidden) are written.
+  -Revert / JSON backup   This script has no parameters and relies on the restore
+                          point taken in step 2, like every other step. See KNOWN
+                          LIMITS 3.
+
+One addition the export did not have: NoNewAppAlert is also written to the HKLM policy
+key, which is where the documented Group Policy setting lives. The HKCU copy the
+reviewed script used and validated is kept.
+
+One existing gap closed in passing: Protect-Privacy writes AllowTelemetry under
+Policies\...\DataCollection only if that key already exists, which it often does not
+on a clean install. DisableTelemetryTasks writes it unconditionally.
+
+## INTERACTIONS WORTH KNOWING
+
+  - SystemRestorePointCreationFrequency is now left at 0. GenSysRestorePoint lifts the
+    throttle for its own checkpoint and restores what it found, which is now 0, so
+    the two agree. Installers can now create restore points every time.
+  - Power throttling off costs battery on a laptop. This script targets desktops.
+  - The Clipboard History menu can turn local Win+V history off. The script itself
+    leaves it on and only disables cross-device sync.
+
+## HOW IT WAS CHECKED
+
+  - Parse-clean, and every command name in the new block resolves to a cmdlet or a
+    function defined in this file. Parse-clean is not proof (ADDENDUM 3), so:
+  - Equivalence against the reviewed script. Apply-WinaeroTweaks.ps1 was loaded with
+    -DefinitionsOnly and every tweak run in its collect mode, which records each
+    path / name / type / value it would write. The new functions here were run with
+    Set-RegValueNet replaced by a recorder. 276 of the 277 writes match a record
+    exactly, including every context-menu command string; the 277th is the HKLM
+    NoNewAppAlert addition. Each of the 32 records the reviewed script has and this
+    one does not is covered by the LEFT OUT list above.
+  - The WMI probe's command line was rebuilt and its -Command text parsed: no errors,
+    and no double quote or newline anywhere in it.
+
+## VERIFIED ON THE VM (2026-10-22, normal admin terminal, 26200 Pro)
+
+  - scan-harness.ps1 against this file before the blocklist refresh below: ran, no
+    refusal. Pass ABSOLUTE paths to it - it uses [IO.File], which resolves relative
+    paths against the process directory, not the one you cd'd into.
+  - Full real run: 53 OK / 1 partial / 0 failed. Steps 47-54 all OK. Step 49 logged
+    the Start policy as "not written" on Pro, and a blank Enter at step 54 skipped.
+    The one PARTIAL is "Removing blacklisted packages" (UndockedDevKit is a
+    SystemApps package; AugLoop.CBS was in use) - identical in the 10-21 baseline.
+  - After a reboot the classic menu showed the new entries (Hash cascade, Take
+    Ownership, Unblock, View owner, Encrypt).
+
+## BLOCKLIST REFRESHED (2026-10-22)
+
+Replaced with the current someonewhocares.org/hosts/zero revision, stamped
+"Thu, 15 Oct 2026 at 17:57:51 GMT" (was 18 Sep 2026). Upstream changed four lines:
+the stamp, plus three new domains and none removed. 13,087 upstream domains, plus
+the 21 in #<other> = 13,108 unique, and the run prints 13,114 entries once the
+localhost and wpad lines are counted. Same method as ADDENDUM 5, done by script:
+  - #<other> is put back unchanged, straight after #</localhost>. Still zero
+    overlap with upstream.
+  - Every upstream entry points at 0.0.0.0, apart from the standard localhost /
+    broadcast / IPv6 lines. No line starts with '@, which would end the here-string.
+  - The upstream file is plain ASCII, so the non-ASCII count is still 31.
+The header's LAST EDITED and Version lines were updated with it (Version 25H2,
+which is what 26200 is).
+
+Re-scanned after the refresh (2026-10-22 18:36): scan-harness.ps1 against the
+refreshed file (sha256 CFD881C8...EB1B) ran with no refusal. The wrapped hash
+B1000579... was recomputed off-box and matches, so that exact file was scanned.
+
+## STILL TO VERIFY
+
+  1. The real-hive check from inside the Claude app: it should stop and ask.
+  2. Validate-Tweaks.ps1 from ExtraTweaks can check a machine this script has run on,
+     since the values are the same. Expected, because of LEFT OUT: pageWindowsUpdate
+     MISSING, and pageStartRecommended MISSING on Home/Pro (INERT there anyway); pageDisableMRT, pageNavPaneDefaultItems and
+     pageDisableTelemetry (dmwappushservice) INCOMPLETE; pageEnableAdministrator
+     SKIPPED; pageDisableCopilot UNSUPPORTED. Anything else short of EFFECTIVE,
+     PARTIAL, MANUAL or UNVERIFIABLE is a real problem.
