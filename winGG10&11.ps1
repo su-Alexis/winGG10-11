@@ -50,7 +50,7 @@
 ###################################################################
 ###################################################################
 ##                                                               ##
-##           LAST EDITED : 10 - 23 - 2026 06:03:07 A.M.          ##
+##           LAST EDITED : 10 - 23 - 2026 06:45:00 A.M.          ##
 ##                          Version 25H2                         ##
 ##                                                               ##
 ###################################################################
@@ -2507,7 +2507,7 @@ Function HardenDefender {
     #Controlled Folder Access - they block unsigned mods, tools and game saves. No exclusions are
     #added, for games or anything else: an exclusion is a blind spot, and Defender already scans
     #trusted signed game files cheaply.
-    #A setting you already made yourself (a rule set to Audit or Off, PUA set to Audit) is kept.
+    #An ASR rule you already set yourself (Audit, Warn or Off) is kept. PUA is different - see below.
     Write-Host "Hardening Microsoft Defender (PUA + 5 ASR rules). . ." -ForegroundColor Yellow
     if (-not (Test-DefenderActive)) {
         #Nothing is changed either way, and Defender is never switched back on - but "another
@@ -2537,14 +2537,26 @@ Function HardenDefender {
     }
     $pref = Get-MpPreference -ErrorAction Stop
 
-    if ([int]$pref.PUAProtection -eq 0) {
+    #PUA: 0 off, 1 block, 2 audit (detect and log, block nothing).
+    #CHANGED 2026-10-23: anything but 1 is set to block. 2 used to be kept as "your choice", but
+    #it is Microsoft's own default since security intelligence 1.329.495.0, so it cannot be told
+    #apart from never touched - the VM showed 2 and the old rule changed nothing there, or on
+    #almost any up-to-date PC. Read back afterwards: a Group Policy value beats Set-MpPreference.
+    $pua = [int]$pref.PUAProtection
+    if ($pua -ne 1) {
         try {
             Set-MpPreference -PUAProtection Enabled -ErrorAction Stop
-            Write-Host "  Potentially unwanted app blocking on." -ForegroundColor Green
+            $now = Invoke-Silently { (Get-MpPreference -ErrorAction Stop).PUAProtection }
+            if ([int]$now -eq 1) {
+                Write-Host "  Potentially unwanted app blocking on (was $pua - 0 off, 2 audit only)." -ForegroundColor Green
+            }
+            else {
+                Write-Host "  Potentially unwanted app blocking did not stick (still reads '$now') - a Group Policy setting probably overrides it." -ForegroundColor DarkYellow
+            }
         }
         catch { Write-Host "  PUA protection: $($_.Exception.Message)" -ForegroundColor DarkYellow }
     }
-    else { Write-Host "  Potentially unwanted app blocking already set ($([int]$pref.PUAProtection) - 1 on, 2 audit) - kept." -ForegroundColor Green }
+    else { Write-Host "  Potentially unwanted app blocking already on - kept." -ForegroundColor Green }
 
     $rules = @(
         '56a863a9-875e-4185-98a7-b882c64b5ce5'

@@ -1322,10 +1322,14 @@ does not treat that as a boundary, but a hardening script should not hand it a p
          e6db77e5-3df2-4cf1-b95a-636979351e5b  persistence through WMI event subscription
          b2b3f03d-6a65-4f7b-a9c7-1c7ef74a9ba4  untrusted / unsigned processes from USB
          be9ba2d9-53ea-4cdc-84e5-9b1eeee46550  executable content from email / webmail
-       Added with Add-MpPreference (Set- would replace the whole rule list). A rule or
-       PUA setting you already configured is kept as it is. $script:AsrAction can be
-       set to 'AuditMode' for a trial run (Defender Operational log: 1121 = blocked,
+       Added with Add-MpPreference (Set- would replace the whole rule list). A rule you
+       already configured is kept as it is. $script:AsrAction can be set to
+       'AuditMode' for a trial run (Defender Operational log: 1121 = blocked,
        1122 = audited). No exclusions are ever added.
+       PUA is set to 1 (block) unless it already is, then read back. CHANGED after the
+       VM run: it used to keep any value but 0, but 2 (audit, blocks nothing) is
+       Microsoft's own default on current security intelligence (1.329.495.0+), so on
+       almost every up-to-date PC the old rule changed nothing.
        Skipped when Defender is not the active AV. Windows Security is then asked for
        other antivirus: another one reporting itself on = "X is your active
        antivirus", nothing changed; NOTHING on = a red NO ACTIVE ANTIVIRUS warning,
@@ -1333,7 +1337,7 @@ does not treat that as a boundary, but a hardening script should not hand it a p
        Side effects: unsigned tools run straight from a USB stick are blocked; some
        "free" bundleware installers are blocked as PUA.
        Undo: Remove-MpPreference -AttackSurfaceReductionRules_Ids <id>
-             Set-MpPreference -PUAProtection Disabled
+             Set-MpPreference -PUAProtection AuditMode   (Windows' default)
   41 Enabling the vulnerable driver blocklist
        HKLM\SYSTEM\CurrentControlSet\Control\CI\Config\VulnerableDriverBlocklistEnable=1.
        Stops "bring your own vulnerable driver" - the usual way ransomware and public
