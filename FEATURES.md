@@ -918,7 +918,7 @@ and the variant must differ from this file in exactly ONE hunk.
 
 # ADDENDUM 7 - EXTRA TWEAKS MERGED IN (2026-10-22)
 
-704,895 bytes / 19,573 lines / 79 functions / 54 steps.
+707,895 bytes / 19,613 lines / 79 functions / 54 steps.
 NOT YET RUN as a whole - see "STILL TO VERIFY" at the end.
 
 ## WHAT THIS IS

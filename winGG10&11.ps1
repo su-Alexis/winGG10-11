@@ -85,14 +85,31 @@
 ##  Confirm-RealUserHive            refuse to run against a virtualized / wrong-user HKCU
 ##  Set-RegValueNet                 .NET registry write, for '*' keys and empty values
 ##  Add-ShellVerb                   one context-menu entry (New-PathSafeCmd builds its command)
+##  Set-RegValue                    create the key, then write the value (provider)
+##  Invoke-Silently                 run a probe whose failure is a valid answer, off $Error
+##  Invoke-AsSystem                 run a body as SYSTEM via a one-shot scheduled task
+##  Test-HkcuVirtualized            compare this HKCU with a WMI-started process's HKCU
+##  Get-DesktopUserSid              SID of whoever owns explorer.exe in this session
+##  Disable-TaskIfPresent           disable a scheduled task, skip it if this build lacks it
+##  Add-SettingsPageHide            merge one page into SettingsPageVisibility
+##  New-ElevatedCmd                 cmd.exe through UAC with fixed, checked arguments
+##  New-PathSafeCmd                 context-menu command that passes the path as data
+##  Test-SecureStringEqual          compare two SecureStrings with no managed copies
+##  Close-ScriptWindow              close the console a few seconds after the run
+##  Write-Gradient                  write a line in a colour gradient
+##  Show-ArtReveal                  animated in-place reveal of the ASCII art
+##  Show-ArtCascade                 line-by-line cascade when in-place animation cannot run
+##  Restore-ConsoleColour           put the console colours back after an animation
+##  Clear-ProgressBar               clear any leftover Write-Progress bars
 ##
 ##
 ##  DEBLOAT:
 ##
-##  DebloatAll                      whitelist sweep - removes everything not protected
+##  DebloatAll                      SURVEY ONLY - reports unlisted packages, removes nothing
 ##  DebloatBlacklist                the curated list - sponsored junk, CandyCrush etc.
-##  FixWhitelistedApps              re-registers anything the sweep took by mistake
+##  FixWhitelistedApps              re-registers whitelisted apps that went missing
 ##  Remove-Keys                     leftover bloatware registry keys
+##  Get-BlacklistPatterns           the 40 patterns DebloatBlacklist removes
 ##
 ##
 ##  PRIVACY:
@@ -104,6 +121,14 @@
 ##  Stop-EdgePDF                    stop Edge grabbing .pdf
 ##  BlockAdsAndSuggestions          lock screen / Start / Settings ads, web search suggestions
 ##  DisableTelemetryTasks           appraiser + Autochk tasks, feedback prompts, MRT reporting
+##  DisableRecallAndAI              Recall / Windows AI data analysis off (policy)
+##  DisableActivityHistory          Timeline feed, publishing and upload off
+##  DisableCloudClipboard           cross-device clipboard sync off, local Win+V kept
+##  LimitDeliveryOptimization       Delivery Optimization to LAN peers only
+##  DisableTelemetryExtras          error reporting, CEIP, Find My Device, settings sync
+##  RestrictBackgroundApps          per-user background app access off
+##  DisableCopilot                  Windows Copilot off, taskbar button hidden
+##  HardenEdgeTelemetry             Edge kept (WebView2), its telemetry policies set
 ##
 ##
 ##  OPTIMIZE / TWEAK:
@@ -117,7 +142,11 @@
 ##  OSKDis                          on-screen keyboard off
 ##  AeroShakeDisable                stop shake-to-minimise
 ##  Remove3dObjects                 drop 3D Objects from This PC
-##  HIGHPOWA                        power plan -> High Performance
+##  HIGHPOWA                        power plan -> Ultimate Performance
+##  OptimizeLinkAndInputPower       USB selective suspend, PCIe ASPM, NIC power saving off
+##  TuneSchedulerAndTimer           Win32PrioritySeparation + global timer resolution
+##  ReclaimDiskSpace                hibernation off, Reserved Storage off
+##  SetVisualEffectsPerformance     animations off, ClearType kept
 ##  ApplySystemExtras               nav pane, power throttling, BSOD detail, Insider page, etc.
 ##  RestorePhotoViewer              Windows Photo Viewer back in "Open with" / Default apps
 ##  AddControlPanelWU               Windows Update entry in Control Panel
@@ -132,6 +161,17 @@
 ##  BlocklistMNNSSM                 write Dan Pollock's hosts blocklist (backs up first)
 ##  Set-CloudFlareDNS               1.1.1.1 / 1.0.0.1 on every connected PHYSICAL adapter
 ##  NetResetReboot                  runs net-reset-reboot.bat /y /none  (resets, never reboots)
+##  EnableDoH                       DNS over HTTPS for the CloudFlare resolvers
+##
+##
+##  SECURITY HARDENING:
+##
+##  DisableSMBv1                    SMBv1 off, insecure guest auth blocked
+##  DisableLLMNRandNetBIOS          LLMNR, mDNS and NetBIOS-NS off
+##  HardenCredentialStorage         WDigest off, LSA Protection (RunAsPPL) on
+##  DisablePowerShellV2             remove the pre-AMSI PowerShell v2 engine
+##  CompleteAutoRunHardening        NoDriveTypeAutoRun=255, NoAutorun=1
+##  DisableLegacyRemoteAccess       WPAD, Remote Assistance, Remote Registry off
 ##
 ##
 ##  SYSTEM / TOOLS:
