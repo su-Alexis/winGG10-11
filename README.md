@@ -94,14 +94,16 @@ embedded in this script are what get written to the Desktop.
 
 ## Verify your download
 
-Releases are published from `v*` tags, and each
-[release](https://github.com/su-Alexis/winGG10-11/releases) lists the SHA256 of the
-`winGG10&11.ps1` attached to it. Every commit on `main` also has its SHA256 in the
-summary of its CI run, on the [Actions](https://github.com/su-Alexis/winGG10-11/actions)
-page. Download the file, then:
+Each [release](https://github.com/su-Alexis/winGG10-11/releases) has the script
+attached as `winGG10-11.ps1`, with its SHA256 in the release notes and in
+`SHA256SUMS.txt`. GitHub does not allow `&` in a download's name, so it is the same file
+under a different name; renaming it back to `winGG10&11.ps1` does not change the hash.
+Every commit on `main` also has its SHA256 in the summary of its CI run, on the
+[Actions](https://github.com/su-Alexis/winGG10-11/actions) page. Check the file you have:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 '.\winGG10&11.ps1'
+Get-FileHash -Algorithm SHA256 '.\winGG10-11.ps1'     # a release download
+Get-FileHash -Algorithm SHA256 '.\winGG10&11.ps1'     # from a clone
 ```
 
 The hash must match exactly. Both hashes are of the file as git checks it out, with
