@@ -29,7 +29,7 @@ A full transcript of every run lands in `C:\Temp\WindowsDebloat&Optimize`.
 
 ---
 
-## THE STEPS  (44 at time of writing; 54 now - see addenda)
+## THE STEPS  (54, numbered in run order - refreshed 2026-10-23)
 
 ### Preparation
   1.  Building Desktop tools + God Mode
@@ -37,24 +37,26 @@ A full transcript of every run lands in `C:\Temp\WindowsDebloat&Optimize`.
   3.  Repairing the system image (DISM/SFC)
 
 ### Debloat
-  4.  Uninstalling bloatware                    whitelist sweep, all users
-  5.  Removing blacklisted/sponsored apps       17 curated patterns
+  4.  Surveying unrecognised packages           reports only, removes nothing (ADDENDUM 2)
+  5.  Removing blacklisted packages             40 curated patterns
   6.  Removing leftover bloatware reg keys
-  7.  Restoring whitelisted apps                re-registers anything caught by mistake
+  7.  Restoring whitelisted apps                re-registers anything that went missing
 
 ### Privacy and telemetry
   8.  Applying privacy + telemetry settings
   9.  Disabling Cortana
   10. Disabling Diagnostics Tracking Service    DiagTrack stopped and disabled
   11. Re-enabling DMWAppushservice              deliberately put BACK - Windows needs it
-  33. Disabling Recall / Windows AI
-  34. Disabling Activity History
-  35. Disabling cross-device clipboard sync     local Win+V history deliberately kept
-  36. Restricting Delivery Optimization         LAN peers only, stops seeding to strangers
-  39. Disabling error reporting and CEIP
-  40. Restricting background app access
-  41. Disabling Windows Copilot
-  42. Muzzling Edge telemetry                   Edge is kept (WebView2), so it is muzzled
+  35. Disabling Recall / Windows AI
+  36. Disabling Activity History
+  37. Disabling cross-device clipboard sync     local Win+V history deliberately kept
+  38. Restricting Delivery Optimization         LAN peers only, stops seeding to strangers
+  41. Disabling error reporting and CEIP
+  42. Restricting background app access
+  43. Disabling Windows Copilot
+  44. Muzzling Edge telemetry                   Edge is kept (WebView2), so it is muzzled
+  47. Blocking ads, tips and web suggestions    lock screen / Start / Settings ads, web search
+  48. Disabling remaining telemetry tasks       appraiser, Autochk, feedback prompts, MRT reporting
 
 ### Explorer and shell
   12. Removing 3D Objects from Explorer
@@ -62,7 +64,13 @@ A full transcript of every run lands in `C:\Temp\WindowsDebloat&Optimize`.
   15. Showing seconds in the system clock
   23. Disabling the On-Screen Keyboard
   24. Disabling Aero Shake
-  44. Setting visual effects to performance     ClearType explicitly preserved
+  46. Setting visual effects to performance     ClearType explicitly preserved
+  49. Applying Explorer and system extras       nav pane, BSOD detail, Insider page; Start
+                                                "Recommended" hidden on Enterprise/Education/SE only
+  50. Restoring Windows Photo Viewer            back in Open with / Default apps
+  51. Adding Windows Update to Control Panel
+  52. Adding context menu tools                 admin consoles, hash, take ownership, unblock...
+  53. Restoring the classic context menu        Windows 11 only; the revert command is printed
 
 ### Performance and gaming
   14. Enabling .NET 3.5                         many older games still need it
@@ -71,26 +79,32 @@ A full transcript of every run lands in `C:\Temp\WindowsDebloat&Optimize`.
   18. Disabling Fast Boot (hybrid shutdown)
   19. Unparking the CPU
   20. Disabling Nagle's Algorithm               TcpAckFrequency=1, TcpDelAckTicks=0, TCPNoDelay=1
-  27. Setting the power plan to High Performance
-  43. Reclaiming disk space                     hibernation off, Reserved Storage off
+  27. Setting the Ultimate Performance power plan
+  28. Disabling USB/PCIe/NIC power saving       selective suspend, PCIe ASPM, NIC power saving
+  29. Tuning scheduler and timer resolution     Win32PrioritySeparation=38, GlobalTimerResolutionRequests=1
+  45. Reclaiming disk space                     hibernation off, Reserved Storage off
 
-  Also applied: `bcdedit useplatformclock=false` and `disabledynamictick=yes`
-  (boot timer latency). UNTESTED ON REAL FIRMWARE - see the caution below.
+  Also applied inside step 17: `bcdedit /deletevalue useplatformclock` (Windows picks
+  the timer again) and `disabledynamictick yes` (boot timer latency). UNTESTED ON REAL
+  FIRMWARE - see the caution below.
 
 ### Network
   21. Applying the hosts blocklist              13,108 sinkholed domains
   25. Setting DNS to CloudFlare                 1.1.1.1 / 1.0.0.1
   26. Resetting the local network stack
-  37. Enabling DNS over HTTPS                   encrypts the CloudFlare queries
+  39. Enabling DNS over HTTPS                   encrypts the CloudFlare queries
 
 ### Security hardening
   22. Disabling AutoRun                         AutoRun.inf -> @SYS:DoesNotExist
-  28. Hardening SMB (v1 + guest auth)           EternalBlue transport, guest fallback
-  29. Disabling LLMNR, mDNS and NetBIOS-NS      all three broadcast name protocols
-  30. Hardening credential storage              WDigest off, LSA RunAsPPL on
-  31. Removing the PowerShell v2 engine         predates AMSI and script-block logging
-  32. Completing AutoRun hardening              NoDriveTypeAutoRun=255
-  38. Disabling legacy remote access            WPAD, Remote Assistance, Remote Registry
+  30. Hardening SMB (v1 + guest auth)           EternalBlue transport, guest fallback
+  31. Disabling LLMNR, mDNS and NetBIOS-NS      all three broadcast name protocols
+  32. Hardening credential storage              WDigest off, LSA RunAsPPL on
+  33. Removing the PowerShell v2 engine         predates AMSI and script-block logging
+  34. Completing AutoRun hardening              NoDriveTypeAutoRun=255
+  40. Disabling legacy remote access            WPAD, Remote Assistance, Remote Registry
+
+### Accounts
+  54. Built-in Administrator account (optional) OPT-IN: password required, blank Enter skips
 
 ---
 
@@ -904,7 +918,7 @@ and the variant must differ from this file in exactly ONE hunk.
 
 # ADDENDUM 7 - EXTRA TWEAKS MERGED IN (2026-10-22)
 
-704,895 bytes / 19,573 lines / 79 functions / 54 steps.
+707,895 bytes / 19,613 lines / 79 functions / 54 steps.
 NOT YET RUN as a whole - see "STILL TO VERIFY" at the end.
 
 ## WHAT THIS IS
