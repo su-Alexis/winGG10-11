@@ -1525,6 +1525,5 @@ packages that are ~3 MB together and run nothing on their own.
   4. All three are still installed, as expected. No winGG-run-* folder was left
      behind, and AppXDeploymentServer logged no errors during the run.
 
-## STILL TO DO BEFORE MERGE
-
-  - scan-harness on this build. No scan output from 10-27 was found on the VM.
+  5. scan-harness (3951D8D9...): "ran (no refusal)", exit 0, stderr empty, for
+     source CB2B1A53...8183 (pr7, 2026-10-27 16:24 local).
