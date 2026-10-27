@@ -39,7 +39,7 @@ FEATURES.md first and taking a restore point.
 | Area | Steps |
 |---|---|
 | Preparation | Desktop tools + God Mode, a verified restore point, DISM/SFC repair |
-| Debloat | A survey of unrecognised packages (reported, never removed), 40 blacklisted package patterns removed, leftover registry keys, whitelisted apps re-registered |
+| Debloat | A survey of unrecognised packages (reported, never removed), 40 blacklisted package patterns removed (packages that are part of Windows are skipped and listed in the run summary), leftover registry keys, whitelisted apps re-registered |
 | Privacy | Telemetry and ad ID, Cortana, DiagTrack, Recall / Windows AI, Activity History, cross-device clipboard (local Win+V kept), Delivery Optimization limited to LAN, error reporting and CEIP, background apps, Copilot, Edge telemetry, ads / tips / web suggestions, leftover telemetry tasks. `dmwappushservice` is deliberately kept on |
 | Explorer and shell | 3D Objects removed, Edge PDF takeover stopped, seconds on the clock, On-Screen Keyboard and Aero Shake off, performance visual effects (ClearType kept), Explorer extras (Start "Recommended" hidden on Enterprise / Education / SE only), Windows Photo Viewer, Windows Update in Control Panel, right-click tools, the classic context menu on Windows 11 |
 | Performance and gaming | .NET 3.5, game and system tuning, Fast Boot off, CPU unparked, Nagle off, the Ultimate Performance power plan, USB / PCIe / NIC power saving off, scheduler and timer tuning, hibernation and Reserved Storage off |

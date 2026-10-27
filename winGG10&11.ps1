@@ -50,7 +50,7 @@
 ###################################################################
 ###################################################################
 ##                                                               ##
-##           LAST EDITED : 10 - 22 - 2026 11:59:26 P.M.          ##
+##           LAST EDITED : 10 - 27 - 2026 03:46:30 P.M.          ##
 ##                          Version 25H2                         ##
 ##                                                               ##
 ###################################################################
@@ -87,6 +87,7 @@
 ##  Add-ShellVerb                   one context-menu entry (New-PathSafeCmd builds its command)
 ##  Set-RegValue                    create the key, then write the value (provider)
 ##  Invoke-Silently                 run a probe whose failure is a valid answer, off $Error
+##  Add-RunSkip                     log something left alone on purpose, for the summary too
 ##  Invoke-AsSystem                 run a body as SYSTEM via a one-shot scheduled task
 ##  Test-HkcuVirtualized            compare this HKCU with a WMI-started process's HKCU
 ##  Get-DesktopUserSid              SID of whoever owns explorer.exe in this session
@@ -1074,6 +1075,14 @@ Function Write-RunSummary {
         Write-Host "Anything not marked OK is written to the transcript in $DebloatFolder" -ForegroundColor Yellow
     }
 
+    #ADDED 2026-10-27: what was skipped on purpose, so it is in the summary and not only
+    #somewhere up in the scrollback.
+    if ($script:RunSkips.Count) {
+        Write-Host ""
+        Write-Host "  SKIPPED ON PURPOSE (not counted as failures)" -ForegroundColor Cyan
+        foreach ($s in $script:RunSkips) { Write-Host "    $s" -ForegroundColor DarkCyan }
+    }
+
     #ADDED 2026-10-23: warnings that need you, then the anti-cheat readiness lines again,
     #where you will actually see them.
     if ($script:RunWarnings.Count) {
@@ -1691,6 +1700,9 @@ Function Get-BlacklistPatterns {
         "*CrossDevice*"
         "*QuickAssist*"
         "*MSTeams*"
+        #These two are part of Windows (NonRemovable, under SystemApps). DebloatBlacklist SKIPS
+        #them and says so in the output and the run summary. They stay listed so every run
+        #reports them instead of quietly dropping them.
         "*AugLoop*"
         "*UndockedDevKit*"
         "*GetHelp*"
@@ -1755,12 +1767,62 @@ Function DebloatBlacklist {
         }
     }
 
+    #CHANGED 2026-10-27: each match is now removed on its own, by full name, so a package that
+    #is part of Windows can be told apart from a real failure.
+    #
+    #PART OF WINDOWS = NonRemovable is set, or the package lives under %WINDIR%\SystemApps.
+    #Those are SKIPPED, never attempted: each one is printed on its own line (so it is in the
+    #console and the transcript) and listed again in the run summary, and the step is not
+    #marked PARTIAL for it. Both packages behind the old PARTIAL are this kind - checked on the
+    #26200 VM, 2026-10-27: NonRemovable True, SignatureKind System, under SystemApps.
+    #  - MicrosoftWindows.UndockedDevKit: windowsudk.winmd and nothing else - no apps, no
+    #    extensions. Shell (Start/taskbar/Explorer) plumbing per third-party write-ups,
+    #    undocumented by Microsoft. Removal fails 0x80070032 "part of Windows".
+    #  - Microsoft.Windows.AugLoop.CBS: a FRAMEWORK. One in-proc WinRT server
+    #    (Microsoft.Windows.AugLoop.dll, 22 classes: workflow engine, suggested actions, local
+    #    ML workflows) that other components load at run time. Removal fails 0x80073D02 in the
+    #    DynamicDependenciesInUse stage: something has it loaded. Pulling a framework out from
+    #    under whatever loads it is how Start or Search ends up broken.
+    #Neither is forced out. The known workaround (marking it EndOfLife in the registry) is not
+    #worth a broken shell for two packages that are ~3 MB together and run nothing on their own.
+    #
+    #Everything else that goes wrong stays in $Error, so the step still reports PARTIAL with the
+    #real message. That includes a REMOVABLE package that is in use: it really was not removed.
+    $sysApps = (Join-Path $script:WinDir 'SystemApps') + '\'
     foreach ($Bloat in $Bloatware) {
-        Get-AppxPackage -Name $Bloat | Remove-AppxPackage
+        Write-Host "Trying to remove $Bloat."
+        foreach ($pkg in @(Get-AppxPackage -Name $Bloat)) {
+            $loc = [string]$pkg.InstallLocation
+            if ($pkg.NonRemovable -or $loc.StartsWith($sysApps, [StringComparison]::OrdinalIgnoreCase)) {
+                Add-RunSkip $pkg.PackageFullName 'part of Windows, it cannot be uninstalled'
+                continue
+            }
+            $mark = $Error.Count
+            try {
+                Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
+                Write-Host "  Removed $($pkg.PackageFullName)" -ForegroundColor DarkGray
+            }
+            catch {
+                #Matched on the HRESULT in the text, which is the same in every display language.
+                #0x80070032 = Windows said "part of Windows" although neither check above caught it
+                #(an older build without NonRemovable, say). That is the same answer, so it is the
+                #same skip.
+                $msg = [string]$_.Exception.Message
+                if ($msg -match '0x80070032') {
+                    while ($Error.Count -gt $mark) { $Error.RemoveAt(0) }
+                    Add-RunSkip $pkg.PackageFullName 'part of Windows, it cannot be uninstalled'
+                }
+                else {
+                    Write-Host "  FAILED  $($pkg.PackageFullName): $msg" -ForegroundColor Yellow
+                    if ($msg -match '0x80073D02') {
+                        Write-Host "          It is in use. Sign out or reboot, then run this again." -ForegroundColor Yellow
+                    }
+                }
+            }
+        }
         if ($null -ne $provisioned) {
             $provisioned | Where-Object { $_.DisplayName -like $Bloat } | Remove-AppxProvisionedPackage -Online
         }
-        Write-Host "Trying to remove $Bloat."
     }
 }
 
@@ -2485,6 +2547,20 @@ $script:AsrAction = 'Enabled'
 #Things a step found that you need to act on but that are not failures of the step itself.
 #Write-RunSummary prints them at the end in red, where they cannot scroll away.
 $script:RunWarnings = @()
+
+#Things a step left alone ON PURPOSE and wants you to know about: not failures, so they do
+#not make the step PARTIAL, but never silent either. Each one is printed when it happens
+#(console + transcript) and Write-RunSummary lists them all again at the end.
+$script:RunSkips = @()
+
+Function Add-RunSkip {
+    param(
+        [Parameter(Mandatory)][string]$Item,
+        [Parameter(Mandatory)][string]$Reason
+    )
+    Write-Host "  SKIPPED $Item - $Reason" -ForegroundColor Cyan
+    $script:RunSkips += "$Item - $Reason"
+}
 
 Function Test-DefenderActive {
     #$true only when Microsoft Defender Antivirus is the active antivirus. With another AV

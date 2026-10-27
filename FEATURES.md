@@ -1457,3 +1457,53 @@ does not treat that as a boundary, but a hardening script should not hand it a p
   - The transcript shows "PS>TerminatingError(): ... GetAttributes ... Could not
     find file" lines from step 25. They are caught "is something already there?"
     probes, like the older Get-ScheduledTask and pwsh.exe lines - not failures.
+
+---
+
+# ADDENDUM 9 - PART-OF-WINDOWS PACKAGES ARE SKIPPED, NOT FAILED (2026-10-27)
+
+758,327 bytes / 20,340 lines / 93 functions / 58 steps.
+
+Every VM run so far ended 57 OK / 1 PARTIAL. The PARTIAL was always step
+"Removing blacklisted packages", and always the same two packages. Both were
+checked on the 26200 VM (read only, 2026-10-27):
+
+  Package                          NonRemovable  SignatureKind  Lives in
+  MicrosoftWindows.UndockedDevKit  True          System         C:\Windows\SystemApps
+  Microsoft.Windows.AugLoop.CBS    True          System         C:\Windows\SystemApps
+
+  - UndockedDevKit holds only windowsudk.winmd: no apps, no extensions. Write-ups
+    describe it as shell (Start / taskbar / Explorer) plumbing; Microsoft does not
+    document it. Removal fails with 0x80070032 "part of Windows and cannot be
+    uninstalled on a per-user basis".
+  - AugLoop.CBS is a FRAMEWORK: one in-proc WinRT server, Microsoft.Windows.AugLoop.dll
+    (22 classes - workflow engine, suggested actions, local ML workflows), no exe.
+    Removal fails with 0x80073D02 in the DynamicDependenciesInUse stage, i.e.
+    something has it loaded at run time. Retrying or rebooting does not change that.
+
+Neither is forced out. The known workaround (an EndOfLife registry entry) targets
+undocumented shell components, and a broken Start or Search is not worth two
+packages that are ~3 MB together and run nothing on their own.
+
+## WHAT CHANGED
+
+  - DebloatBlacklist removes each match on its own, by full name.
+  - A match with NonRemovable set, or installed under %WINDIR%\SystemApps, is SKIPPED
+    without being attempted. A removal that still comes back 0x80070032 (a build
+    without the NonRemovable property, say) is the same answer and gets the same skip.
+  - Every skip prints "SKIPPED <package> - <reason>" on its own line, so it is in the
+    console and the transcript, and the run summary lists them all again under
+    "SKIPPED ON PURPOSE (not counted as failures)". New helper: Add-RunSkip.
+  - Anything else that fails still stays in $Error and makes the step PARTIAL with
+    the real message, and is now also printed as "FAILED <package>: <message>".
+    That includes a REMOVABLE package that is in use (0x80073D02): it really was not
+    removed, so it is not hidden. The line adds "sign out or reboot, then run again".
+  - "*AugLoop*" and "*UndockedDevKit*" stay in Get-BlacklistPatterns on purpose, so
+    every run reports them as skipped instead of dropping them silently.
+
+Expected on the VM: 58 OK / 0 PARTIAL / 0 failed, with two SKIPPED lines.
+
+## NOT VERIFIED YET
+
+  - Not run on Windows. CI parses it with Windows PowerShell 5.1.
+  - Needs the scan-harness and a full VM run before merge (new hash).
