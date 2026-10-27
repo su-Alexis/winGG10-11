@@ -1501,9 +1501,30 @@ packages that are ~3 MB together and run nothing on their own.
   - "*AugLoop*" and "*UndockedDevKit*" stay in Get-BlacklistPatterns on purpose, so
     every run reports them as skipped instead of dropping them silently.
 
-Expected on the VM: 58 OK / 0 PARTIAL / 0 failed, with two SKIPPED lines.
+## VERIFIED ON THE VM (2026-10-27, DESKTOP-KGI7IKG, build 26200)
 
-## NOT VERIFIED YET
+  Build CB2B1A53...8183 (this PR), transcript
+  PowerShell_transcript.DESKTOP-KGI7IKG.ENsgoszD.20261027155550.txt.
 
-  - Not run on Windows. CI parses it with Windows PowerShell 5.1.
-  - Needs the scan-harness and a full VM run before merge (new hash).
+  1. 58 OK / 0 partial / 0 failed. "Removing blacklisted packages" is OK, with
+     no FAILED lines. Every other step matched the 10-27 baseline, with the same
+     known harmless transcript lines as before.
+  2. THREE skips, not two. The run summary's "SKIPPED ON PURPOSE" section lists:
+       Microsoft.AIFabric.CBS.1.6_1.6.951.100_x64__8wekyb3d8bbwe
+       Microsoft.Windows.AugLoop.CBS_1.1126.2131.0_x64__8wekyb3d8bbwe
+       MicrosoftWindows.UndockedDevKit_10.0.26100.1_neutral_neutral_cw5n1h2txyewy
+  3. Why AIFabric.CBS is new: it is also NonRemovable, SignatureKind System, a
+     framework, under SystemApps. But unlike the other two, a per-user
+     Remove-AppxPackage of it SUCCEEDS (AppXDeploymentServer 400), so the old code
+     never logged an error for it. Windows then put it straight back on its own:
+     event 486 "Repairing registration", then a RegisterByPackageFullName, 2 seconds
+     after the remove on 10-27. The same remove/re-register pair shows up after every
+     run since 10-21. So it was never staying removed. Skipping it changes nothing
+     on the machine and ends that cycle (no AIFabric remove or register events since
+     the run).
+  4. All three are still installed, as expected. No winGG-run-* folder was left
+     behind, and AppXDeploymentServer logged no errors during the run.
+
+## STILL TO DO BEFORE MERGE
+
+  - scan-harness on this build. No scan output from 10-27 was found on the VM.
