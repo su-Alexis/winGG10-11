@@ -50,7 +50,7 @@
 ###################################################################
 ###################################################################
 ##                                                               ##
-##           LAST EDITED : 10 - 27 - 2026 03:46:30 P.M.          ##
+##           LAST EDITED : 10 - 28 - 2026 01:55:50 A.M.          ##
 ##                          Version 25H2                         ##
 ##                                                               ##
 ###################################################################
@@ -162,7 +162,7 @@
 ##  AddControlPanelWU               Windows Update entry in Control Panel
 ##  AddContextMenuTools             right-click tools (admin consoles, hash, take ownership...)
 ##  SetClassicContextMenu           Windows 10 right-click menu on Windows 11
-##  EnableBuiltinAdmin              OPT-IN: enable built-in Administrator, password + UAC required
+##  EnableBuiltinAdmin              OPT-IN: enable built-in Admin (password + UAC); UAC on if already enabled
 ##
 ##
 ##  NETWORK:
@@ -3717,28 +3717,43 @@ Function OptimizeLinkAndInputPower {
     #"Allow the computer to turn off this device to save power" on the NIC - same class of
     #problem as USB suspend, on the adapter carrying your packets. Physical adapters only, so
     #VM/VPN/virtual adapters are left alone.
-    #Not every driver exposes AllowComputerToTurnOffDevice - VMware's vmxnet3 does not, and
-    #neither do some USB-tethered or virtual adapters. The cmdlet throwing there is the ANSWER
-    #("this adapter has no such setting"), not a failure, but the caught exception still lands
-    #in $Error and Invoke-Step counts it - which reported PARTIAL on an otherwise perfect run.
-    #Error count is captured before the loop and anything this loop added is trimmed afterwards,
-    #the same approach used for the Reserved Storage probe. Real failures elsewhere are untouched.
-    $done = 0
-    $seen = 0
+    #FIXED 2026-10-28: Set-NetAdapterPowerManagement has NO -AllowComputerToTurnOffDevice
+    #parameter. The old call failed to bind on every adapter, Invoke-Silently hid that as
+    #"not supported", and the checkbox was never cleared anywhere. The setting is a PROPERTY
+    #of the object Get-NetAdapterPowerManagement returns: change it there and pipe the object
+    #back to Set-NetAdapterPowerManagement, which writes it. Then it is read back, so the
+    #result line reports what the driver actually holds, not what was asked for.
+    #Not every driver exposes it - VMware's vmxnet3 does not, nor do some USB-tethered
+    #adapters. Those read 'Unsupported' (or the read throws), which is the ANSWER, not a
+    #failure, so the reads go through Invoke-Silently. The WRITE is not silenced: a driver that
+    #shows the setting and then refuses it is a real failure, and the step reports PARTIAL.
+    $done    = 0
+    $already = 0
+    $failed  = @()
+    $seen    = 0
     foreach ($nic in (Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' })) {
         $seen++
-        #A driver not exposing this is the ANSWER, not a failure - vmxnet3 does not, nor do some
-        #USB-tethered adapters. -AsBool because the cmdlet returns nothing on success.
-        if (Invoke-Silently -AsBool { Set-NetAdapterPowerManagement -Name $nic.Name -AllowComputerToTurnOffDevice Disabled -ErrorAction Stop }) { $done++ }
+        $pm = Invoke-Silently { Get-NetAdapterPowerManagement -Name $nic.Name -ErrorAction Stop }
+        $state = if ($pm) { "$($pm.AllowComputerToTurnOffDevice)" } else { '' }
+        if ($state -eq 'Disabled') { $already++; continue }
+        if ($state -ne 'Enabled') { continue }   #'Unsupported', empty or unknown: not exposed
+        $pm.AllowComputerToTurnOffDevice = 'Disabled'
+        $pm | Set-NetAdapterPowerManagement -ErrorAction SilentlyContinue
+        $after = Invoke-Silently { Get-NetAdapterPowerManagement -Name $nic.Name -ErrorAction Stop }
+        if ($after -and "$($after.AllowComputerToTurnOffDevice)" -eq 'Disabled') { $done++ }
+        else { $failed += $nic.Name }
     }
     if ($seen -eq 0) {
         Write-Host "  No connected physical adapters found - nothing to change." -ForegroundColor Green
     }
-    elseif ($done -eq 0) {
+    elseif (($done + $already + $failed.Count) -eq 0) {
         Write-Host "  $seen adapter(s) found, none expose a power-saving setting - nothing to change." -ForegroundColor Green
     }
     else {
-        Write-Host "  NIC power saving disabled on $done of $seen adapter(s)." -ForegroundColor Green
+        Write-Host "  NIC power saving off on $($done + $already) of $seen adapter(s) ($done changed, $already already off)." -ForegroundColor Green
+    }
+    foreach ($n in $failed) {
+        Write-Host "  '$n': the driver did not accept the change - untick it in Device Manager > Power Management." -ForegroundColor DarkYellow
     }
 }
 
@@ -4286,7 +4301,10 @@ Function EnableBuiltinAdmin {
     #(FilterAdministratorToken=1, the "UAC: Admin Approval Mode for the Built-in Administrator
     #account" policy). Then it gets UAC prompts like any other admin, and that same setting is
     #the documented fix for Store apps refusing to open under it. Nothing else changes for your
-    #own account. An account that is already enabled is still left exactly as it is.
+    #own account.
+    #CHANGED 2026-10-28: an account that is ALREADY enabled is no longer left with UAC off. Its
+    #enabled state and password are untouched, but FilterAdministratorToken=1 is set, so it
+    #stops running everything fully elevated. Takes effect at its next sign-in.
     #Blank answer, no console, or two mismatched entries three times = skipped, account left
     #as it was. The password is read as a SecureString and never echoed or logged; the run
     #transcript only records the prompt.
@@ -4296,8 +4314,23 @@ Function EnableBuiltinAdmin {
         Write-Host "  Could not find the built-in Administrator account (RID 500) - skipped." -ForegroundColor DarkYellow
         return
     }
+    $sysPol = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
     if ($admin.Enabled) {
-        Write-Host "  '$($admin.Name)' is already enabled - left exactly as it is." -ForegroundColor Green
+        #Enabled before this run (by you, or something else). Not disabled here - you may sign in
+        #with it - but it should not run with UAC filtering off.
+        $cur = (Get-ItemProperty -LiteralPath $sysPol -Name FilterAdministratorToken -ErrorAction SilentlyContinue).FilterAdministratorToken
+        if ($cur -eq 1) {
+            Write-Host "  '$($admin.Name)' is already enabled, with UAC prompts already on - left as it is." -ForegroundColor Green
+            return
+        }
+        Set-RegValue $sysPol 'FilterAdministratorToken' 1
+        if ((Get-ItemProperty -LiteralPath $sysPol -Name FilterAdministratorToken -ErrorAction SilentlyContinue).FilterAdministratorToken -eq 1) {
+            Write-Host "  '$($admin.Name)' is already enabled - left enabled, UAC prompts turned on for it (from its next sign-in)." -ForegroundColor Green
+        }
+        else {
+            Write-Host "  '$($admin.Name)' is already enabled, and UAC for it could NOT be turned on." -ForegroundColor DarkYellow
+        }
+        Write-Host "  If you do not sign in with it, disable it:  Disable-LocalUser -SID $($admin.SID.Value)" -ForegroundColor DarkGray
         return
     }
     Write-Host "  This enables '$($admin.Name)', the built-in Administrator. It ships with no password and" -ForegroundColor DarkGray
@@ -4329,7 +4362,6 @@ Function EnableBuiltinAdmin {
         }
         #UAC for RID 500 BEFORE it is enabled, so it is never usable without it. Takes effect at its
         #first sign-in, because the setting is read when the sign-in token is made.
-        $sysPol = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
         Set-RegValue $sysPol 'FilterAdministratorToken' 1
         if ((Get-ItemProperty -LiteralPath $sysPol -Name FilterAdministratorToken -ErrorAction SilentlyContinue).FilterAdministratorToken -ne 1) {
             Write-Host "  Could not turn on UAC for '$($admin.Name)' - it stays disabled." -ForegroundColor DarkYellow

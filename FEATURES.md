@@ -1067,7 +1067,9 @@ It asks for a new password for the RID-500 account ("leave blank and press Enter
 skip"), asks for it again, and only then sets the password and enables the account -
 in that order, so a refused password never leaves it enabled with the blank one it
 ships with. Blank, no console, or three mismatched pairs = skipped, nothing changed.
-Already enabled = left exactly as it is. The password is read as a SecureString,
+Already enabled = left enabled, password untouched, but FilterAdministratorToken=1
+is set so it gets UAC prompts (CHANGED 2026-10-28, ADDENDUM 10). The password is
+read as a SecureString,
 never echoed or logged, and the two entries are compared in unmanaged memory that is
 zeroed straight afterwards. The step prints how to turn it off again
 (Disable-LocalUser -SID ...-500).
@@ -1269,7 +1271,7 @@ does not treat that as a boundary, but a hardening script should not hand it a p
     HKLM\...\Policies\System\FilterAdministratorToken=1 (UAC Admin Approval Mode for
     RID 500). It then gets UAC prompts, and Store / Xbox apps open under it. If the
     value cannot be written, the account stays disabled. An already-enabled account
-    is still left as it is.
+    was left as it is at the time; since ADDENDUM 10 it gets the same UAC setting.
   - Context menu: Unblock, "Run with Windows PowerShell (keep open)" and "Run with
     PowerShell 7" are now Shift+right-click only. Unblock strips the Mark of the Web
     that SmartScreen and Office macro blocking key on; the two Run entries run a
@@ -1527,3 +1529,58 @@ packages that are ~3 MB together and run nothing on their own.
 
   5. scan-harness (3951D8D9...): "ran (no refusal)", exit 0, stderr empty, for
      source CB2B1A53...8183 (pr7, 2026-10-27 16:24 local).
+
+---
+
+# ADDENDUM 10 - NIC POWER SAVING FIXED, UAC FOR AN ALREADY-ENABLED ADMIN (2026-10-28)
+
+760,594 bytes / 20,372 lines / 58 steps.
+
+Both came out of the 2026-10-28 canary run on a real PC (Windows 11 25H2, wired
+Ethernet, built-in Administrator already enabled before the run).
+
+## NIC POWER SAVING NEVER WORKED (step "Disabling USB/PCIe/NIC power saving")
+
+The old line was
+
+    Set-NetAdapterPowerManagement -Name $nic.Name -AllowComputerToTurnOffDevice Disabled
+
+Set-NetAdapterPowerManagement has no -AllowComputerToTurnOffDevice parameter, so
+it failed to bind on every adapter. Invoke-Silently treated that as "this driver
+has no such setting", the step printed "none expose a power-saving setting", and
+the Device Manager checkbox "Allow the computer to turn off this device to save
+power" stayed ticked on every PC. The host scan after the run still read Enabled.
+
+AllowComputerToTurnOffDevice is a property of the object
+Get-NetAdapterPowerManagement returns. The step now:
+
+  1. reads it (Invoke-Silently: a driver without it is an answer, not a failure);
+  2. Disabled already  -> counted as "already off", nothing written;
+     Unsupported/empty -> not exposed, skipped (vmxnet3, some USB adapters);
+     Enabled           -> sets the property to Disabled and pipes the object back
+                          to Set-NetAdapterPowerManagement;
+  3. reads it again and reports what the driver holds:
+     "NIC power saving off on X of N adapter(s) (C changed, A already off)".
+     A write the driver refuses is NOT silenced, so the step shows PARTIAL with the
+     real message, plus a line naming the adapter and the Device Manager fallback.
+
+The adapter can drop its link for a second or two when the setting is written.
+The step runs before the network reset, so nothing depends on the link there.
+
+## BUILT-IN ADMINISTRATOR ALREADY ENABLED (step "Built-in Administrator account")
+
+Before: an account that was already enabled was "left exactly as it is", which
+meant RID 500 kept running everything fully elevated with no UAC prompt.
+
+Now, when RID 500 is already enabled:
+
+  - it stays enabled and its password is not touched;
+  - HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+    FilterAdministratorToken = 1 (DWORD) is set, then read back. That is the
+    "UAC: Admin Approval Mode for the Built-in Administrator account" policy. It
+    takes effect at that account's next sign-in;
+  - if it was already 1, nothing is written;
+  - the step prints how to disable the account if you do not sign in with it.
+
+Nothing changes for your own account. To undo: set the value to 0 (or delete it).
+The disabled-account path (opt-in enable, password first) is unchanged.
