@@ -50,7 +50,7 @@
 ###################################################################
 ###################################################################
 ##                                                               ##
-##           LAST EDITED : 10 - 27 - 2026 03:46:30 P.M.          ##
+##           LAST EDITED : 10 - 28 - 2026 02:13:54 A.M.          ##
 ##                          Version 25H2                         ##
 ##                                                               ##
 ###################################################################
@@ -111,6 +111,7 @@
 ##  Write-BatFile                   write an embedded .bat as CRLF ASCII, never through a link
 ##  Test-DefenderActive             is Microsoft Defender the active antivirus?
 ##  Write-ReadinessLine             one line of the anti-cheat readiness report
+##  Set-EventLogMinSize             raise an event log's size cap (never lowers it), read back
 ##
 ##
 ##  DEBLOAT:
@@ -139,6 +140,7 @@
 ##  RestrictBackgroundApps          per-user background app access off
 ##  DisableCopilot                  Windows Copilot off, taskbar button hidden
 ##  HardenEdgeTelemetry             Edge kept (WebView2), its telemetry policies set
+##  EnableEdgePuaBlocking           Edge SmartScreen blocks potentially unwanted downloads
 ##
 ##
 ##  OPTIMIZE / TWEAK:
@@ -185,7 +187,13 @@
 ##  HardenDefender                  PUA blocking + 5 ASR rules (skipped under another antivirus)
 ##  EnableDriverBlocklist           Microsoft vulnerable driver blocklist on
 ##  CheckFirewallAndRdp             firewall back on if something turned it off; RDP needs NLA
+##  EnableProcessAuditing           event 4688 + command line, Security log to 128 MB
+##  EnableScriptBlockLogging        PowerShell event 4104, its log to 64 MB
+##  EnableFirewallLogging           dropped packets logged on all 3 profiles, 16 MB cap
+##  RestrictAnonymousAccess         no anonymous listing of shares and accounts
+##  HardenIPStack                   source routing dropped, ICMP redirects ignored (after the reset)
 ##  Show-AntiCheatReadiness         READ-ONLY: TPM, Secure Boot, VBS/HVCI, IOMMU, boot flags
+##  CheckUpdateHealth               READ-ONLY: warns on stale updates or a broken WSUS setting
 ##
 ##
 ##  SYSTEM / TOOLS:
@@ -2724,6 +2732,147 @@ Function CheckFirewallAndRdp {
     else { Write-Host "  Remote Desktop is off." -ForegroundColor Green }
 }
 
+#-----------------------------------------------------------------------------------------------
+#  ADDED 2026-10-28 (host canary scan, triage section 3; FEATURES.md ADDENDUM 10): the logging
+#  you want to already be there after an incident, plus three small network/LSA settings.
+#  None of it touches anti-cheat, the boot config, drivers, the scheduler or game traffic.
+#  Logging costs disk, not frames: every log below has a fixed size cap and overwrites
+#  its oldest entries.
+#-----------------------------------------------------------------------------------------------
+
+Function Set-EventLogMinSize {
+    #Raises an event log's maximum size to at least $Bytes. Never lowers it: a bigger size you
+    #(or a policy) set is kept. Read back afterwards, because an EventLog MaxSize Group Policy
+    #beats a local change.
+    param(
+        [Parameter(Mandatory)][string]$LogName,
+        [Parameter(Mandatory)][long]$Bytes
+    )
+    $mb = [Math]::Round($Bytes / 1MB)
+    try {
+        $log = Get-WinEvent -ListLog $LogName -ErrorAction Stop
+        $was = [long]$log.MaximumSizeInBytes
+        if ($was -ge $Bytes) {
+            Write-Host ("  {0} log is {1} MB already - kept." -f $LogName, [Math]::Round($was / 1MB)) -ForegroundColor Green
+            return
+        }
+        $log.MaximumSizeInBytes = $Bytes
+        $log.SaveChanges()
+        $now = [long](Get-WinEvent -ListLog $LogName -ErrorAction Stop).MaximumSizeInBytes
+        if ($now -ge $Bytes) {
+            Write-Host ("  {0} log raised from {1} MB to {2} MB." -f $LogName, [Math]::Round($was / 1MB), $mb) -ForegroundColor Green
+        }
+        else {
+            Write-Error ("{0} log is still {1} MB after asking for {2} MB - a Group Policy size probably overrides it." -f $LogName, [Math]::Round($now / 1MB), $mb)
+        }
+    }
+    catch { Write-Host "  $LogName log size: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+}
+
+Function EnableProcessAuditing {
+    #Event 4688 in the Security log: every process that starts, who started it, its parent, and
+    #(with the second value below) the full command line. After an incident it is the first
+    #thing you want and the one thing you cannot turn on after the fact.
+    #TRADE-OFF: a password typed ON a command line (net user x P@ss, some installers) is logged
+    #with it. The Security log is readable by administrators only.
+    Write-Host "Turning on process creation auditing (event 4688). . ." -ForegroundColor Yellow
+    #Subcategory settings are ignored while a category-level ("legacy") audit policy applies.
+    #1 makes the subcategory setting below win. It is the Windows default since Vista, but
+    #upgrades and old tweak tools can leave it unset.
+    Set-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' 'SCENoApplyLegacyAuditPolicy' 1
+    Set-RegValue 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit' 'ProcessCreationIncludeCmdLine_Enabled' 1
+
+    #By GUID, not by name: the subcategory NAME is translated on non-English Windows.
+    #Success only. Failure auditing is left as it is (/failure is not passed at all).
+    $guid = '{0CCE922B-69AE-11D9-BED3-505054503030}'
+    $out = & auditpol.exe /set "/subcategory:$guid" /success:enable 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error ("auditpol /set failed (exit {0}): {1}" -f $LASTEXITCODE, (($out | Out-String).Trim()))
+        return
+    }
+    #Read back. /r prints CSV. Newer builds add a numeric "Setting Value" (1 success, 2 failure,
+    #3 both), which does not depend on the display language; otherwise fall back to the text.
+    $row = Invoke-Silently { & auditpol.exe /get "/subcategory:$guid" /r 2>$null | Where-Object { $_ } | ConvertFrom-Csv | Select-Object -First 1 }
+    $num = if ($row -and $row.PSObject.Properties['Setting Value']) { [string]$row.'Setting Value' } else { '' }
+    if ($num -match '^\d+$') { $on = ([int]$num -band 1) -eq 1 }
+    elseif ($row)            { $on = [string]$row.'Inclusion Setting' -match 'Success' }
+    else                     { $on = $null }
+    if ($on -eq $true)      { Write-Host "  Process Creation: success auditing on, command lines included." -ForegroundColor Green }
+    elseif ($on -eq $false) { Write-Error "Process Creation auditing still reads '$($row.'Inclusion Setting')' - a Group Policy audit setting probably overrides it." }
+    else                    { Write-Host "  Process Creation auditing set (auditpol exit 0), but it could not be read back." -ForegroundColor DarkYellow }
+
+    #20 MB by default, which a busy PC with 4688 on fills in days.
+    Set-EventLogMinSize 'Security' 128MB
+}
+
+Function EnableScriptBlockLogging {
+    #Event 4104 in Microsoft-Windows-PowerShell/Operational: the text of every PowerShell script
+    #block as it runs, AFTER de-obfuscation - which is how encoded/packed PowerShell malware
+    #shows up in plain text. Applies to Windows PowerShell 5.1. (PowerShell 7 reads its own
+    #PowerShellCore policy key and is not covered here.)
+    #Only script blocks, not invocation start/stop logging, which is very noisy for little gain.
+    #SIDE EFFECTS: every winGG run logs itself too (this file is large, so that is a lot of
+    #4104 events - harmless, the log size cap rolls them over), and a secret written as plain
+    #text inside a script would be logged. The Admin password prompt in this script reads a
+    #SecureString, so that is not logged.
+    Write-Host "Enabling PowerShell script block logging (event 4104). . ." -ForegroundColor Yellow
+    Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging' 'EnableScriptBlockLogging' 1
+    #15 MB by default, which this script's own run alone gets close to.
+    Set-EventLogMinSize 'Microsoft-Windows-PowerShell/Operational' 64MB
+}
+
+Function EnableFirewallLogging {
+    #Writes DROPPED packets to %SystemRoot%\System32\LogFiles\Firewall\pfirewall.log on all three
+    #profiles. Allowed traffic is NOT logged (LogAllowed is left as it is), so game traffic never
+    #goes through this. Capped at 16 MB (the default is 4); a bigger size you already set is kept.
+    #Under another firewall product (CheckFirewallAndRdp leaves that alone) this changes a
+    #setting that only matters if the Windows firewall comes back on.
+    Write-Host "Logging dropped firewall packets. . ." -ForegroundColor Yellow
+    try {
+        foreach ($p in @(Get-NetFirewallProfile -ErrorAction Stop)) {
+            $kb = [int]$p.LogMaxSizeKilobytes
+            if ($kb -lt 16384) { $kb = 16384 }
+            Set-NetFirewallProfile -Name $p.Name -LogBlocked True -LogMaxSizeKilobytes $kb -ErrorAction Stop
+        }
+        #Read back the EFFECTIVE value: a Group Policy firewall setting beats the local one.
+        foreach ($p in @(Get-NetFirewallProfile -PolicyStore ActiveStore -ErrorAction Stop)) {
+            if ([string]$p.LogBlocked -eq 'True') {
+                Write-Host ("  {0} profile: dropped packets logged, {1} KB cap." -f $p.Name, $p.LogMaxSizeKilobytes) -ForegroundColor Green
+            }
+            else { Write-Error "$($p.Name) profile: blocked-packet logging still reads '$($p.LogBlocked)' - a Group Policy firewall setting probably overrides it." }
+        }
+    }
+    catch { Write-Host "  Firewall logging: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+}
+
+Function RestrictAnonymousAccess {
+    #RestrictAnonymous = 1: an anonymous (null session) connection can no longer list this PC's
+    #shares or accounts. CIS baseline. Anonymous SAM account listing is already off by default
+    #(RestrictAnonymousSAM = 1); this covers the shares as well.
+    #1, not 2: 2 removes Everyone from anonymous tokens altogether, which breaks some older NAS
+    #boxes and printers for no real gain on a home PC.
+    Write-Host "Blocking anonymous share and account listing. . ." -ForegroundColor Yellow
+    Set-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' 'RestrictAnonymous' 1
+    Write-Host "  RestrictAnonymous = 1." -ForegroundColor Green
+}
+
+Function HardenIPStack {
+    #Two LAN-side redirection tricks, both off:
+    #  DisableIPSourceRouting = 2 (IPv4 and IPv6) - drop packets that carry their own route.
+    #  EnableICMPRedirect     = 0 (IPv4)          - ignore "use this other router" messages, so
+    #                                               nothing on the LAN can reroute traffic
+    #                                               through itself.
+    #Neither changes the route a normal packet takes, so games are not affected.
+    #MUST run after NetResetReboot (it does: this is in the hardening block, like DoH). netsh
+    #int ip reset rewrites Tcpip\Parameters. Read by tcpip.sys at boot, so this applies after the
+    #reboot.
+    Write-Host "Hardening IP source routing and ICMP redirects. . ." -ForegroundColor Yellow
+    Set-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters'  'DisableIPSourceRouting' 2
+    Set-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters' 'DisableIPSourceRouting' 2
+    Set-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters'  'EnableICMPRedirect' 0
+    Write-Host "  Source routing dropped (IPv4 + IPv6), ICMP redirects ignored - after the reboot." -ForegroundColor Green
+}
+
 #Filled by Show-AntiCheatReadiness, printed again by Write-RunSummary.
 $script:AntiCheatReport = @()
 
@@ -2844,6 +2993,89 @@ Function HardenEdgeTelemetry {
     Set-RegValue $edge 'SpotlightExperiencesAndRecommendationsEnabled' 0
     Set-RegValue $edge 'ShowRecommendationsEnabled' 0
     Set-RegValue $edge 'HideFirstRunExperience' 1
+}
+
+Function EnableEdgePuaBlocking {
+    #Edge's SmartScreen also blocks downloads of potentially unwanted apps (bundled adware,
+    #toolbars, "driver updaters") when this is on. It works only while SmartScreen itself is on,
+    #which this script never changes. As a policy it also greys out the toggle in edge://settings.
+    Write-Host "Blocking potentially unwanted app downloads in Edge. . ." -ForegroundColor Yellow
+    Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'SmartScreenPuaEnabled' 1
+}
+
+Function CheckUpdateHealth {
+    #READ-ONLY. Warns, changes nothing. Found on the canary host 2026-10-28: four months without
+    #an update, because WSUS policy values (from some other tool) pointed Windows Update at a
+    #server name with no http:// in front, which fails every scan with 0x80072EE6.
+    #WSUS values are NEVER deleted here: a real managed PC uses exactly these values.
+    Write-Host "Checking Windows Update health (read-only). . ." -ForegroundColor Yellow
+    $warn = {
+        param([string]$Msg)
+        Write-Host "  $Msg" -ForegroundColor Red
+        $script:RunWarnings += $Msg
+    }
+
+    $wu  = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+    $pol = Invoke-Silently { Get-ItemProperty -LiteralPath $wu -ErrorAction Stop }
+    $au  = Invoke-Silently { Get-ItemProperty -LiteralPath "$wu\AU" -ErrorAction Stop }
+    $server = ''
+    foreach ($n in 'WUServer', 'WUStatusServer', 'UpdateServiceUrlAlternate') {
+        $v = if ($pol -and $pol.PSObject.Properties[$n]) { ([string]$pol.$n).Trim() } else { '' }
+        if (-not $v) { continue }
+        if ($n -eq 'WUServer') { $server = $v }
+        if ($v -notmatch '^https?://') {
+            & $warn "WINDOWS UPDATE: policy $n is '$v' - not an http:// or https:// address, so every update scan fails (0x80072EE6). Not changed here; if this PC is not managed by an organisation, find what set it under $wu."
+        }
+        else { Write-Host "  $n = $v" -ForegroundColor DarkGray }
+    }
+    $useWsus = $au  -and $au.PSObject.Properties['UseWUServer'] -and $au.UseWUServer -eq 1
+    $noInet  = $pol -and $pol.PSObject.Properties['DoNotConnectToWindowsUpdateInternetLocations'] -and $pol.DoNotConnectToWindowsUpdateInternetLocations -eq 1
+    if ($useWsus -and $noInet) {
+        & $warn "WINDOWS UPDATE: this PC may only take updates from the WSUS server '$server' (UseWUServer=1 and DoNotConnectToWindowsUpdateInternetLocations=1). Right for a managed PC; on a home PC it means no updates at all. Not changed here."
+    }
+    elseif ($useWsus) { Write-Host "  Updates come from the WSUS server '$server' (UseWUServer=1)." -ForegroundColor DarkGray }
+
+    #Newest installed OS update. Win32_QuickFixEngineering holds the cumulative, servicing stack
+    #and .NET updates. Windows Update history is only the fallback, with Defender definition
+    #updates filtered out: those arrive daily and would hide a months-old cumulative update.
+    $newest = $null
+    $what   = ''
+    foreach ($q in @(Invoke-Silently { Get-CimInstance -ClassName Win32_QuickFixEngineering -ErrorAction Stop })) {
+        $raw = $q.InstalledOn
+        $d   = $null
+        if ($raw -is [datetime]) { $d = $raw }
+        elseif ($raw) {
+            $s = ([string]$raw).Trim()
+            $p = [datetime]::MinValue
+            #Normally M/d/yyyy whatever the display language; very old entries are a hex FILETIME.
+            if ([datetime]::TryParseExact($s, [string[]]@('M/d/yyyy', 'MM/dd/yyyy', 'yyyyMMdd'), [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$p)) { $d = $p }
+            elseif ($s -match '^[0-9A-Fa-f]{15,16}$') { $d = [datetime]::FromFileTime([Convert]::ToInt64($s, 16)) }
+        }
+        if ($d -and (-not $newest -or $d -gt $newest)) { $newest = $d; $what = [string]$q.HotFixID }
+    }
+    if (-not $newest) {
+        $hist = Invoke-Silently {
+            $s = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher()
+            $n = $s.GetTotalHistoryCount()
+            if ($n -gt 0) { @($s.QueryHistory(0, [Math]::Min($n, 500))) }
+        }
+        foreach ($h in @($hist)) {
+            #Operation 1 = install. ResultCode 2 = succeeded, 3 = succeeded with errors.
+            if (-not $h -or $h.Operation -ne 1 -or @(2, 3) -notcontains [int]$h.ResultCode) { continue }
+            if ([string]$h.Title -match 'Defender|Security Intelligence|Malicious Software|Definition') { continue }
+            $d = ([datetime]$h.Date).ToLocalTime()
+            if (-not $newest -or $d -gt $newest) { $newest = $d; $what = [string]$h.Title }
+        }
+    }
+    if (-not $newest) {
+        Write-Host "  Newest installed update: could not be read." -ForegroundColor DarkYellow
+        return
+    }
+    $age = [int][Math]::Floor(((Get-Date) - $newest).TotalDays)
+    if ($age -gt 45) {
+        & $warn ("WINDOWS UPDATE: the newest installed update ({0}) is from {1:yyyy-MM-dd}, {2} days ago. Monthly security updates are not arriving - check Settings > Windows Update for a pause or an error." -f $what, $newest, $age)
+    }
+    else { Write-Host ("  Newest installed update: {0}, {1:yyyy-MM-dd} ({2} days ago)." -f $what, $newest, $age) -ForegroundColor Green }
 }
 
 Function ReclaimDiskSpace {
@@ -20136,6 +20368,13 @@ Invoke-Step "Enabling DNS over HTTPS"                { EnableDoH } -Spin
 Invoke-Step "Hardening Microsoft Defender"           { HardenDefender } -Spin
 Invoke-Step "Enabling the vulnerable driver blocklist" { EnableDriverBlocklist } -Spin
 Invoke-Step "Checking firewall and Remote Desktop"   { CheckFirewallAndRdp } -Spin
+#ADDED 2026-10-28 (FEATURES.md ADDENDUM 10). Logging first, then HardenIPStack, which has to
+#stay after NetResetReboot for the same reason DoH does: netsh int ip reset rewrites Tcpip.
+Invoke-Step "Auditing process creation"              { EnableProcessAuditing } -Spin
+Invoke-Step "Enabling PowerShell script block logging" { EnableScriptBlockLogging } -Spin
+Invoke-Step "Logging dropped firewall packets"       { EnableFirewallLogging } -Spin
+Invoke-Step "Blocking anonymous share/account listing" { RestrictAnonymousAccess } -Spin
+Invoke-Step "Hardening IP source routing + redirects" { HardenIPStack } -Spin
 
 #ADDED (Tier A). Grouped after the existing hardening for the same reason DoH sits last:
 #nothing here should run before the network steps have settled.
@@ -20144,6 +20383,7 @@ Invoke-Step "Disabling error reporting and CEIP"     { DisableTelemetryExtras } 
 Invoke-Step "Restricting background app access"      { RestrictBackgroundApps } -Spin
 Invoke-Step "Disabling Windows Copilot"              { DisableCopilot } -Spin
 Invoke-Step "Muzzling Edge telemetry"                { HardenEdgeTelemetry } -Spin
+Invoke-Step "Blocking unwanted apps in Edge"         { EnableEdgePuaBlocking } -Spin
 Invoke-Step "Reclaiming disk space"                  { ReclaimDiskSpace }
 Invoke-Step "Setting visual effects to performance"  { SetVisualEffectsPerformance } -Spin
 
@@ -20161,6 +20401,8 @@ Invoke-Step "Restoring the classic context menu"      { SetClassicContextMenu } 
 #ADDED 2026-10-23: read-only, so it sits after every change and reports the final state. Its
 #lines are printed again under the run summary.
 Invoke-Step "Checking anti-cheat readiness"          { Show-AntiCheatReadiness }
+#ADDED 2026-10-28: read-only too. Its warnings are printed again under the run summary.
+Invoke-Step "Checking Windows Update health"         { CheckUpdateHealth } -Spin
 
 #ADDED: opt-in, interactive, and deliberately the LAST step - you answer it once and walk away,
 #and a blank answer (or no console) skips it. No -Spin: the spinner would fight the prompt.

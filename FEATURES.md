@@ -19,7 +19,7 @@ Every step goes through one harness, `Invoke-Step`, which:
   - clears and counts `$Error` per step, so a failure inside a step surfaces as
     PARTIAL with the actual message rather than being swallowed or killing the run
   - times every step and feeds a dot-leader run summary at the end
-  - shows a live braille spinner with a ticking elapsed counter on 41 of the 58
+  - shows a live braille spinner with a ticking elapsed counter on 48 of the 65
     steps (the quiet ones; noisy steps keep the classic `[ PROCESS ]` box so
     their own output is not fought over)
   - detects when output is redirected or piped and silently drops back to static
@@ -30,7 +30,7 @@ locked to administrators on every run (ADDENDUM 8).
 
 ---
 
-## THE STEPS  (58, numbered in run order - refreshed 2026-10-23, ADDENDUM 8)
+## THE STEPS  (65, numbered in run order - refreshed 2026-10-28, ADDENDUM 10)
 
 ### Preparation
   1.  Building Desktop tools + God Mode
@@ -52,12 +52,13 @@ locked to administrators on every run (ADDENDUM 8).
   36. Disabling Activity History
   37. Disabling cross-device clipboard sync     local Win+V history deliberately kept
   38. Restricting Delivery Optimization         LAN peers only, stops seeding to strangers
-  44. Disabling error reporting and CEIP
-  45. Restricting background app access
-  46. Disabling Windows Copilot
-  47. Muzzling Edge telemetry                   Edge is kept (WebView2), so it is muzzled
-  50. Blocking ads, tips and web suggestions    lock screen / Start / Settings ads, web search
-  51. Disabling remaining telemetry tasks       appraiser, Autochk, feedback prompts, MRT reporting
+  49. Disabling error reporting and CEIP
+  50. Restricting background app access
+  51. Disabling Windows Copilot
+  52. Muzzling Edge telemetry                   Edge is kept (WebView2), so it is muzzled
+  53. Blocking unwanted apps in Edge            SmartScreenPuaEnabled=1 (SmartScreen itself untouched)
+  56. Blocking ads, tips and web suggestions    lock screen / Start / Settings ads, web search
+  57. Disabling remaining telemetry tasks       appraiser, Autochk, feedback prompts, MRT reporting
 
 ### Explorer and shell
   12. Removing 3D Objects from Explorer
@@ -65,13 +66,13 @@ locked to administrators on every run (ADDENDUM 8).
   15. Showing seconds in the system clock
   23. Disabling the On-Screen Keyboard
   24. Disabling Aero Shake
-  49. Setting visual effects to performance     ClearType explicitly preserved
-  52. Applying Explorer and system extras       nav pane, BSOD detail, Insider page; Start
+  55. Setting visual effects to performance     ClearType explicitly preserved
+  58. Applying Explorer and system extras       nav pane, BSOD detail, Insider page; Start
                                                 "Recommended" hidden on Enterprise/Education/SE only
-  53. Restoring Windows Photo Viewer            back in Open with / Default apps
-  54. Adding Windows Update to Control Panel
-  55. Adding context menu tools                 admin consoles, hash, take ownership, unblock...
-  56. Restoring the classic context menu        Windows 11 only; the revert command is printed
+  59. Restoring Windows Photo Viewer            back in Open with / Default apps
+  60. Adding Windows Update to Control Panel
+  61. Adding context menu tools                 admin consoles, hash, take ownership, unblock...
+  62. Restoring the classic context menu        Windows 11 only; the revert command is printed
 
 ### Performance and gaming
   14. Enabling .NET 3.5                         many older games still need it
@@ -83,7 +84,7 @@ locked to administrators on every run (ADDENDUM 8).
   27. Setting the Ultimate Performance power plan
   28. Disabling USB/PCIe/NIC power saving       selective suspend, PCIe ASPM, NIC power saving
   29. Tuning scheduler and timer resolution     Win32PrioritySeparation=38, GlobalTimerResolutionRequests=1
-  48. Reclaiming disk space                     hibernation off, Reserved Storage off
+  54. Reclaiming disk space                     hibernation off, Reserved Storage off
 
   Also applied inside step 17: `bcdedit /deletevalue useplatformclock` (Windows picks
   the timer again) and `disabledynamictick yes` (boot timer latency). UNTESTED ON REAL
@@ -107,15 +108,24 @@ locked to administrators on every run (ADDENDUM 8).
   41. Enabling the vulnerable driver blocklist  BYOVD protection; can stop OLD fan/RGB/OC tools
   42. Checking firewall and Remote Desktop      firewall back on if something turned it off;
                                                 RDP left as it is, but made to require NLA
-  43. Disabling legacy remote access            WPAD, Remote Assistance, Remote Registry
+  43. Auditing process creation                 event 4688 + command line, Security log >= 128 MB
+  44. Enabling PowerShell script block logging  event 4104, PowerShell/Operational log >= 64 MB
+  45. Logging dropped firewall packets          all 3 profiles, pfirewall.log, 16 MB cap
+  46. Blocking anonymous share/account listing  Lsa RestrictAnonymous=1
+  47. Hardening IP source routing + redirects   DisableIPSourceRouting=2 (v4+v6), EnableICMPRedirect=0;
+                                                after the reset on purpose
+  48. Disabling legacy remote access            WPAD, Remote Assistance, Remote Registry
 
 ### Report
-  57. Checking anti-cheat readiness             READ-ONLY: Windows 11, TPM 2.0, Secure Boot,
+  63. Checking anti-cheat readiness             READ-ONLY: Windows 11, TPM 2.0, Secure Boot,
                                                 VBS, Memory Integrity, IOMMU, driver blocklist,
                                                 test-signing / debug boot. Repeated in the summary
+  64. Checking Windows Update health            READ-ONLY: warns when the newest update is over
+                                                45 days old, a WSUS URL has no http(s)://, or
+                                                WSUS-only is forced. Never deletes WSUS values
 
 ### Accounts
-  58. Built-in Administrator account (optional) OPT-IN: password required, UAC turned on for it,
+  65. Built-in Administrator account (optional) OPT-IN: password required, UAC turned on for it,
                                                 blank Enter skips
 
 ---
@@ -1527,3 +1537,79 @@ packages that are ~3 MB together and run nothing on their own.
 
   5. scan-harness (3951D8D9...): "ran (no refusal)", exit 0, stderr empty, for
      source CB2B1A53...8183 (pr7, 2026-10-27 16:24 local).
+
+---
+
+# ADDENDUM 10 - LOGGING, UPDATE HEALTH, SMALL NETWORK/LSA HARDENING (2026-10-28)
+
+774,576 bytes / 20,582 lines / 101 functions / 65 steps.
+
+From the host canary scan of v2026.10.27 (triage section 3, 2026-10-28). Same rule as
+ADDENDUM 8: no FPS or latency cost, and nothing touches anti-cheat, the boot config,
+drivers, the scheduler or game traffic. The NIC power fix and FilterAdministratorToken
+are NOT in this change; they are PR #8.
+
+## WHY
+
+The host had gone 138 days without an update and nothing on screen said so. The cause
+was WSUS policy values set by some other tool (WUServer = localserver.localdomain.wsus,
+no http://), which fail every scan with 0x80072EE6. winGG did not set them and did not
+notice them. It also left the logging you want after an incident at the Windows
+defaults: no process auditing, no script block logging, a 20 MB Security log.
+
+## NEW STEPS
+
+  43 Auditing process creation          EnableProcessAuditing
+       auditpol /set /subcategory:{0CCE922B-69AE-11D9-BED3-505054503030} /success:enable
+       (by GUID, so it works on any display language; failure auditing is not touched).
+       Policies\System\Audit ProcessCreationIncludeCmdLine_Enabled = 1 (command line in
+       4688). Lsa SCENoApplyLegacyAuditPolicy = 1, so a category-level policy cannot
+       override the subcategory. Security log raised to at least 128 MB.
+       Read back with auditpol /get /r. TRADE-OFF: a password typed on a command line is
+       logged with it. The Security log is admin-only.
+  44 Enabling PowerShell script block logging   EnableScriptBlockLogging
+       Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging EnableScriptBlockLogging
+       = 1 (event 4104, de-obfuscated script text). Invocation logging stays off (noise).
+       PowerShell/Operational raised to at least 64 MB (default 15). Windows PowerShell 5.1
+       only: PowerShell 7 reads its own PowerShellCore policy key. Every winGG run logs
+       itself too, which is large and harmless.
+  45 Logging dropped firewall packets   EnableFirewallLogging
+       LogBlocked = True on Domain, Private and Public, cap 16 MB (a bigger size is kept).
+       Allowed traffic is not logged. Read back from the ActiveStore, so a Group Policy
+       override shows up as PARTIAL. Log: %SystemRoot%\System32\LogFiles\Firewall\pfirewall.log
+  46 Blocking anonymous share/account listing   RestrictAnonymousAccess
+       Lsa RestrictAnonymous = 1 (CIS). Not 2, which breaks some old NAS boxes and printers.
+  47 Hardening IP source routing + redirects    HardenIPStack
+       Tcpip and Tcpip6 DisableIPSourceRouting = 2, Tcpip EnableICMPRedirect = 0. Runs after
+       step 25 (the network reset) on purpose, like DoH. Applies after the reboot.
+  53 Blocking unwanted apps in Edge     EnableEdgePuaBlocking
+       Policies\Microsoft\Edge SmartScreenPuaEnabled = 1. Works only while SmartScreen is
+       on, which winGG never changes. As a policy it greys out the toggle in Edge.
+  64 Checking Windows Update health     CheckUpdateHealth   READ-ONLY, warnings only
+       Red warning (also repeated under the run summary) when:
+         - WUServer, WUStatusServer or UpdateServiceUrlAlternate is set without http(s)://
+         - AU\UseWUServer = 1 AND DoNotConnectToWindowsUpdateInternetLocations = 1
+           (WSUS only, no fallback to Microsoft)
+         - the newest installed update is more than 45 days old
+       Newest update comes from Win32_QuickFixEngineering (cumulative, servicing stack,
+       .NET). Windows Update history is only the fallback, with Defender definition
+       updates filtered out, because they arrive daily and would hide a stale cumulative.
+       WSUS values are NEVER deleted or changed: real managed PCs use them.
+
+  New helper: Set-EventLogMinSize (raises a log's size cap, never lowers it, reads back).
+
+## DELIBERATELY NOT DONE
+
+  - Disabling Windows Script Host (.vbs/.js): some old installers and vendor tools use it.
+  - Applying the power settings to a Process Lasso / Bitsum plan: Process Lasso owns the
+    plan on purpose (Alexis, 2026-10-28).
+  - Fixing the WSUS values automatically. The warning says what is wrong; the fix is a
+    decision for whoever owns the PC.
+
+## TO CHECK ON THE VM
+
+  - netsh int ip reset (step 25, and the Desktop net-reset-reboot.bat later) against the
+    step 47 values: does a later reset remove them? If it does, running the Desktop tool
+    after winGG undoes step 47 until winGG runs again.
+  - auditpol /get /r column names on 26200 (numeric "Setting Value" or text only).
+  - Every new step OK, and the scan-harness re-run on the new bytes.
