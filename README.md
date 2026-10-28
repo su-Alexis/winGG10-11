@@ -34,7 +34,7 @@ FEATURES.md first and taking a restore point.
 
 ## What it does
 
-58 steps. FEATURES.md has the detail for each one and why it is there.
+65 steps. FEATURES.md has the detail for each one and why it is there.
 
 | Area | Steps |
 |---|---|
@@ -44,8 +44,8 @@ FEATURES.md first and taking a restore point.
 | Explorer and shell | 3D Objects removed, Edge PDF takeover stopped, seconds on the clock, On-Screen Keyboard and Aero Shake off, performance visual effects (ClearType kept), Explorer extras (Start "Recommended" hidden on Enterprise / Education / SE only), Windows Photo Viewer, Windows Update in Control Panel, right-click tools, the classic context menu on Windows 11 |
 | Performance and gaming | .NET 3.5, game and system tuning, Fast Boot off, CPU unparked, Nagle off, the Ultimate Performance power plan, USB / PCIe / NIC power saving off, scheduler and timer tuning, hibernation and Reserved Storage off |
 | Network | Dan Pollock's hosts blocklist (13,108 domains), CloudFlare DNS (IPv4, and IPv6 where you have it) with DNS over HTTPS, a network stack reset that applies on reboot |
-| Security | AutoRun off, SMBv1 and guest auth off, LLMNR / mDNS / NetBIOS-NS off, WDigest off, LSA protection on and NTLMv2 only, the PowerShell v2 engine removed, WPAD / Remote Assistance / Remote Registry off, Defender PUA blocking and five attack surface reduction rules (skipped if you use another antivirus), Microsoft's vulnerable driver blocklist on, the firewall turned back on if something turned it off, Remote Desktop made to require NLA if it is on |
-| Report | An anti-cheat readiness check: Windows 11, TPM 2.0, Secure Boot, VBS, Memory Integrity, IOMMU, test-signing. Read-only - the script never changes any of these |
+| Security | AutoRun off, SMBv1 and guest auth off, LLMNR / mDNS / NetBIOS-NS off, WDigest off, LSA protection on and NTLMv2 only, the PowerShell v2 engine removed, WPAD / Remote Assistance / Remote Registry off, Defender PUA blocking and five attack surface reduction rules (skipped if you use another antivirus), Microsoft's vulnerable driver blocklist on, the firewall turned back on if something turned it off, Remote Desktop made to require NLA if it is on, process creation auditing (4688, with command lines) and PowerShell script block logging (4104) with bigger logs, dropped firewall packets logged, no anonymous share / account listing, IP source routing and ICMP redirects off, Edge blocks potentially unwanted downloads |
+| Report | An anti-cheat readiness check: Windows 11, TPM 2.0, Secure Boot, VBS, Memory Integrity, IOMMU, test-signing. A Windows Update health check: warns when the newest update is over 45 days old or a WSUS policy setting is broken. Both read-only - the script never changes any of these |
 | Optional | The built-in Administrator account, only if you give it a password. UAC is turned on for it |
 
 ## How it runs
